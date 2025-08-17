@@ -1,7 +1,15 @@
 {
-  "functions": {
-    "api/telegram/index.js": {
-      "runtime": "nodejs20.x"
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/telegram/index.js",
+      "use": "@vercel/node"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/api/telegram",
+      "dest": "/api/telegram/index.js"
+    }
+  ]
 }
