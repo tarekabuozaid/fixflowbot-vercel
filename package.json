@@ -1,0 +1,16 @@
+{
+  "name": "fixflowbot-vercel",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "type": "commonjs",
+  "scripts": {
+    "set:webhook": "node scripts/setWebhook.js",
+    "del:webhook": "node scripts/deleteWebhook.js",
+    "diag": "node scripts/diag.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.15.3"
+  }
+}
