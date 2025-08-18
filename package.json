@@ -8,6 +8,8 @@
   },
   "type": "commonjs",
   "scripts": {
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma migrate deploy",
     "set:webhook": "node scripts/setWebhook.js",
     "del:webhook": "node scripts/deleteWebhook.js",
     "diag": "node scripts/diag.js",
