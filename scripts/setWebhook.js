@@ -1,1 +1,24 @@
-const fetch = (...args) => import("node-fetch").then(({default: f}) => f(...args));`nconst token = process.env.BOT_TOKEN;`nconst base = process.env.PUBLIC_URL;`nif (!token || !base) throw new Error("BOT_TOKEN or PUBLIC_URL missing");`nconst url = `${base.replace(/\/$/,"")}/api/telegram`;`n`n(async () => {`n  const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {`n    method: "POST",`n    headers: { "Content-Type": "application/json" },`n    body: JSON.stringify({`n      url,`n      allowed_updates: ["message","callback_query"],`n      max_connections: 40`n    })`n  });`n  const j = await r.json();`n  console.log(j);`n})();
+// scripts/setWebhook.js
+const token = process.env.BOT_TOKEN;
+const base  = process.env.PUBLIC_URL;
+
+if (!token || !base) {
+  console.error('BOT_TOKEN or PUBLIC_URL missing');
+  process.exit(1);
+}
+
+const url = `${base.replace(/\/$/, '')}/api/telegram`;
+
+(async () => {
+  const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url,
+      allowed_updates: ['message', 'callback_query'],
+      max_connections: 40
+    })
+  });
+  const j = await r.json();
+  console.log(j);
+})();
