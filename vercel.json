@@ -1,9 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "api/**/*.js": {
-      "runtime": "nodejs20.x",
-      "maxDuration": 10
-    }
+    "api/telegram/index.js": { "runtime": "nodejs20.x", "maxDuration": 10 },
+    "api/health.js": { "runtime": "nodejs20.x" }
   }
 }
