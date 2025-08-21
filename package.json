@@ -10,6 +10,8 @@
     "build": "echo 'No build step required'",
     "start": "vercel dev"
   },
-  "dependencies": {},
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
   "devDependencies": {}
 }
