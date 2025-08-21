@@ -1,7 +1,3 @@
 {
-  "version": 2,
-  "routes": [
-    { "src": "/api/health", "dest": "/api/health.js" },
-    { "src": "/api/telegram", "dest": "/api/telegram/index.js" }
-  ]
+  "version": 2
 }
