@@ -1,9 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "api/telegram/index.js": { "runtime": "nodejs20", "maxDuration": 10 },
-    "api/health.js": { "runtime": "nodejs20" }
-  },
   "routes": [
     { "src": "/api/health", "dest": "/api/health.js" },
     { "src": "/api/telegram", "dest": "/api/telegram/index.js" }
