@@ -1,13 +1,7 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    }
-  ],
   "functions": {
     "api/telegram/index.js": { "runtime": "nodejs20", "maxDuration": 10 },
-    "api/health.js": { "runtime": "nodejs20" }
+    "api/health/index.js":  { "runtime": "nodejs20" }
   }
 }
