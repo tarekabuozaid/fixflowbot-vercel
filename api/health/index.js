@@ -20,3 +20,5 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ ok: true, db: false, error: e.message }))
   }
 }
+
+module.exports.config = { runtime: 'nodejs20' }

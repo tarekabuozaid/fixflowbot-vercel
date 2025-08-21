@@ -167,3 +167,5 @@ module.exports = async (req, res) => {
     // ما نرسلش رد هنا (ردينا بالفعل 200 فوق)
   }
 };
+
+module.exports.config = { runtime: 'nodejs20', maxDuration: 10 }
