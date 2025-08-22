@@ -12,24 +12,32 @@ if (!token || !publicUrl) {
   };
   module.exports.config = { runtime: 'nodejs20' };
 } else {
-  const bot = new Telegraf(token, { handlerTimeout: 9_000 });
+  const bot = new Telegraf(token, { handlerTimeout: 9000 });
+
+  // لوج لأي خطأ داخل تيليجراف
+  bot.catch((err, ctx) => {
+    console.error('TELEGRAM_ERROR', { update: ctx.update, err: err.message });
+  });
 
   // أمر اختبار
   bot.command('ping', (ctx) => ctx.reply('pong ✅'));
 
-  // رسالة ترحيب مؤقتة
-  bot.start((ctx) => ctx.reply('FixFlowBot جاهز — اكتب /ping للتجربة'));
+  // رد عام يساعدنا نتاكد ان الويبهوك بيوصل
+  bot.on('message', (ctx) => {
+    // لو اللي مبعوت /ping هيرد أعلاه، غير كده هيرد الرسالة دي
+    if (!ctx.message.text?.startsWith('/')) {
+      ctx.reply('👋 bot online — اكتب /ping للتجربة');
+    }
+  });
 
-  // ثبّت الويبهوك (لو كان مختلف هيتحدّث)
+  // اضبط الويبهوك (لو متضبط مش هيتغير)
   const webhookUrl = `${publicUrl}${webhookPath}`;
   bot.telegram.setWebhook(webhookUrl).catch(() => {});
 
-  // هندلر الويبهوك
   const handle = bot.webhookCallback(webhookPath);
 
   module.exports = async (req, res) => {
     if (req.method !== 'POST') {
-      // GET/HEAD للـ health البسيط على نفس المسار
       res.statusCode = 200;
       return res.end('OK');
     }
