@@ -7,6 +7,101 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id               BigInt                  @id @default(autoincrement())
+  tgId             BigInt?                 @unique
+  firstName        String?
+  username         String?
+  phone            String?
+  status           UserStatus              @default(pending)
+  requestedRole    Role?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  activeFacilityId BigInt?
+  memberships      FacilityMember[]
+  switchRequests   FacilitySwitchRequest[]
+  activeFacility   Facility?               @relation(fields: [activeFacilityId], references: [id])
+  workOrders       WorkOrder[]             @relation("WO_ByUser")
+
+  @@index([activeFacilityId])
+}
+
+model Facility {
+  id         BigInt           @id @default(autoincrement())
+  name       String           @unique
+  isDefault  Boolean          @default(false)
+  isActive   Boolean          @default(false)
+  planTier   PlanTier         @default(Free)
+  createdAt  DateTime         @default(now())
+  members    FacilityMember[]
+  User       User[]
+  workOrders WorkOrder[]
+}
+
+model FacilityMember {
+  id         BigInt   @id @default(autoincrement())
+  userId     BigInt
+  facilityId BigInt
+  role       Role     @default(user)
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, facilityId])
+  @@index([facilityId, role])
+}
+
+model WorkOrder {
+  id              BigInt          @id @default(autoincrement())
+  facilityId      BigInt
+  createdByUserId BigInt?
+  status          WorkOrderStatus @default(open)
+  typeOfWork      String?
+  typeOfService   String?
+  priority        String?
+  location        String?
+  department      String?
+  equipment       String?
+  description     String
+  notes           String?
+  callerPhone     String?
+  createdAt       DateTime        @default(now())
+  imageUrl        String?
+  closeImageUrl   String?
+  maintenanceType String?
+  groupName       String?
+  assignee        String?
+  updatedAt       DateTime        @updatedAt
+  statusHistory   StatusHistory[]
+  byUser          User?           @relation("WO_ByUser", fields: [createdByUserId], references: [id])
+  facility        Facility        @relation(fields: [facilityId], references: [id])
+
+  @@index([facilityId, status, updatedAt])
+  @@index([createdByUserId])
+}
+
+model StatusHistory {
+  id          BigInt    @id @default(autoincrement())
+  workOrderId BigInt
+  date        DateTime
+  oldStatus   String?
+  newStatus   String?
+  updatedBy   String?
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+
+  @@index([workOrderId, date])
+}
+
+model FacilitySwitchRequest {
+  id             BigInt        @id @default(autoincrement())
+  userId         BigInt
+  fromFacilityId BigInt?
+  toFacilityId   BigInt
+  status         RequestStatus @default(pending)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  user           User          @relation(fields: [userId], references: [id])
+}
+
 enum Role {
   facility_admin
   supervisor
@@ -37,107 +132,4 @@ enum PlanTier {
   Free
   Pro
   Business
-}
-
-model User {
-  id            BigInt     @id @default(autoincrement())
-  tgId          BigInt?    @unique
-  firstName     String?
-  username      String?
-  phone         String?
-  status        UserStatus @default(pending)
-  requestedRole Role?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-
-  activeFacilityId BigInt?
-  activeFacility   Facility? @relation(fields: [activeFacilityId], references: [id])
-
-  memberships    FacilityMember[]
-  workOrders     WorkOrder[]             @relation("WO_ByUser")
-  switchRequests FacilitySwitchRequest[]
-
-  @@index([activeFacilityId])
-}
-
-model Facility {
-  id        BigInt   @id @default(autoincrement())
-  name      String   @unique
-  isDefault Boolean  @default(false)
-  isActive  Boolean  @default(false)
-  planTier  PlanTier @default(Free)
-  createdAt DateTime @default(now())
-
-  members    FacilityMember[]
-  workOrders WorkOrder[]
-  User       User[]
-}
-
-model FacilityMember {
-  id         BigInt @id @default(autoincrement())
-  userId     BigInt
-  facilityId BigInt
-  role       Role   @default(user)
-
-  user     User     @relation(fields: [userId], references: [id])
-  facility Facility @relation(fields: [facilityId], references: [id])
-
-  @@unique([userId, facilityId])
-  @@index([facilityId, role])
-}
-
-model WorkOrder {
-  id              BigInt          @id @default(autoincrement())
-  facilityId      BigInt
-  createdByUserId BigInt?
-  status          WorkOrderStatus @default(open)
-  typeOfWork      String?
-  typeOfService   String?
-  priority        String?
-  location        String?
-  department      String?
-  equipment       String?
-  description     String
-  notes           String?
-  callerPhone     String?
-  createdAt       DateTime        @default(now())
-  imageUrl        String?
-  closeImageUrl   String?
-  maintenanceType String?
-  groupName       String?
-  assignee        String?
-  updatedAt       DateTime        @updatedAt
-
-  facility Facility @relation(fields: [facilityId], references: [id])
-  byUser   User?    @relation("WO_ByUser", fields: [createdByUserId], references: [id])
-
-  statusHistory StatusHistory[]
-
-  @@index([facilityId, status, updatedAt])
-  @@index([createdByUserId])
-}
-
-model StatusHistory {
-  id          BigInt   @id @default(autoincrement())
-  workOrderId BigInt
-  date        DateTime
-  oldStatus   String?
-  newStatus   String?
-  updatedBy   String?
-
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
-
-  @@index([workOrderId, date])
-}
-
-model FacilitySwitchRequest {
-  id             BigInt        @id @default(autoincrement())
-  userId         BigInt
-  fromFacilityId BigInt?
-  toFacilityId   BigInt
-  status         RequestStatus @default(pending)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
 }
