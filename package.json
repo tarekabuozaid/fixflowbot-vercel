@@ -12,7 +12,8 @@
     "start": "vercel dev",
     "postinstall": "prisma generate",
     "vercel-build": "prisma generate",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "test": "node scripts/test-bot.js"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
