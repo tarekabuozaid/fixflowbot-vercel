@@ -1,5 +1,5 @@
 // api/telegram/index.js
-// FixFlowBot – EN-only UX, Master preserved, stable callbacks
+// FixFlowBot — EN-only UX, Master preserved, stable callbacks, anti-spam onboarding
 
 const { Telegraf, Markup } = require('telegraf');
 const { PrismaClient } = require('@prisma/client');
@@ -13,6 +13,8 @@ const CONFIG = {
   ALLOWED_UPDATES: ['message', 'callback_query', 'my_chat_member', 'chat_member'],
   HANDLER_TIMEOUT: 9000,
   PAGE_SIZE: 5,
+  ONBOARD_COOLDOWN_MS: 5 * 60 * 1000, // at most once per 5 mins per chat
+  RATE_LIMIT_MS: 800, // soft per-user rate limit
 };
 
 if (!CONFIG.TOKEN || !CONFIG.PUBLIC_URL) {
@@ -25,17 +27,23 @@ if (!CONFIG.TOKEN || !CONFIG.PUBLIC_URL) {
   return;
 }
 
-// === DB (singleton) ===
+// === Singletons on Vercel instance ===
 const g = globalThis;
 const prisma = g._prisma ?? new PrismaClient({ log: ['error'] });
 if (!g._prisma) g._prisma = prisma;
 
-// === Tiny in‑memory state (per Vercel instance) ===
-const flows = g._flows ?? new Map();      // userId -> { flow, step, data }
+const flows = g._flows ?? new Map(); // userId -> { flow, step, data, ts }
 if (!g._flows) g._flows = flows;
+
+const seen = g._seen ?? new Map();   // userId -> lastTs (rate limit)
+if (!g._seen) g._seen = seen;
+
+const onboardMarks = g._onboardMarks ?? new Map(); // chatId -> ts
+if (!g._onboardMarks) g._onboardMarks = onboardMarks;
 
 // === Helpers ===
 const isMaster = (ctx) => String(ctx.from?.id || '') === CONFIG.MASTER_ID;
+const kb = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 
 async function ensureUser(ctx) {
   const tgId = BigInt(ctx.from.id);
@@ -47,6 +55,7 @@ async function ensureUser(ctx) {
   }
   return user;
 }
+
 async function requireMembership(ctx) {
   const user = await ensureUser(ctx);
   if (!user.activeFacilityId) throw new Error('no_active_facility');
@@ -56,31 +65,15 @@ async function requireMembership(ctx) {
   if (!member) throw new Error('no_membership');
   return { user, member };
 }
-const kb = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 
-// === Bot init ===
-const bot = new Telegraf(CONFIG.TOKEN, { handlerTimeout: CONFIG.HANDLER_TIMEOUT });
-
-bot.catch((err, ctx) => {
-  console.error('TELEGRAM_ERROR', { err: err.stack || err.message, from: ctx?.from?.id, type: ctx?.updateType });
-  // If it was a callback, clear spinner
-  try { if (ctx?.answerCbQuery) ctx.answerCbQuery('An error occurred. Try again.').catch(()=>{}); } catch {}
-});
-
-// Register commands (EN only, one-time best-effort)
-if (!g._commandsSet) {
-  g._commandsSet = true;
-  bot.telegram.setMyCommands([
-    { command: 'start',  description: 'Open main menu' },
-    { command: 'menu',   description: 'Show main menu' },
-    { command: 'help',   description: 'How to use FixFlow' },
-    { command: 'me',     description: 'Show my profile' },
-    { command: 'ping',   description: 'Check bot status' },
-    { command: 'master', description: 'Master panel (owner only)' },
-  ]).catch(()=>{});
+function rlOk(userId) {
+  const now = Date.now();
+  const last = seen.get(userId);
+  if (last && now - last < CONFIG.RATE_LIMIT_MS) return false;
+  seen.set(userId, now);
+  return true;
 }
 
-// === UI ===
 async function showMainMenu(ctx) {
   const me = await ensureUser(ctx);
   const inline = [];
@@ -111,21 +104,52 @@ async function sendOnboardingMenu(ctx) {
   );
 }
 
-// === Middleware: light onboarding if user is not ready (no Arabic) ===
+// === Bot init ===
+const bot = new Telegraf(CONFIG.TOKEN, { handlerTimeout: CONFIG.HANDLER_TIMEOUT });
+
+bot.catch((err, ctx) => {
+  console.error('TELEGRAM_ERROR', { err: err.stack || err.message, from: ctx?.from?.id, type: ctx?.updateType });
+  try { if (ctx?.answerCbQuery) ctx.answerCbQuery('An error occurred. Try again.').catch(()=>{}); } catch {}
+});
+
+// Register commands (EN only, one-time)
+if (!g._commandsSet) {
+  g._commandsSet = true;
+  bot.telegram.setMyCommands([
+    { command: 'start',  description: 'Open main menu' },
+    { command: 'menu',   description: 'Show main menu' },
+    { command: 'help',   description: 'How to use FixFlow' },
+    { command: 'me',     description: 'Show my profile' },
+    { command: 'ping',   description: 'Check bot status' },
+    { command: 'master', description: 'Master panel (owner only)' },
+  ]).catch(()=>{});
+}
+
+// === Middleware: light onboarding (EN-only) + simple rate limit ===
 bot.use(async (ctx, next) => {
   try {
-    if (ctx.updateType === 'callback_query') return next();
-    if (ctx.message?.text?.startsWith('/')) return next();
-    if (ctx.message?.from?.is_bot) return; // ignore bots
+    const uid = ctx.from?.id;
+    if (uid && !rlOk(uid)) return; // soft rate-limit
 
-    const user = await ensureUser(ctx);
-    if (user.status !== 'active' || !user.activeFacilityId) {
-      await sendOnboardingMenu(ctx);
+    // Only for plain messages, not commands or callbacks
+    if (ctx.updateType !== 'callback_query' && !ctx.message?.text?.startsWith('/')) {
+      const chatId = ctx.chat?.id;
+      if (chatId) {
+        const mark = onboardMarks.get(chatId) || 0;
+        const now = Date.now();
+        const shouldSend = now - mark > CONFIG.ONBOARD_COOLDOWN_MS;
+        const user = await ensureUser(ctx);
+
+        if (shouldSend && (user.status !== 'active' || !user.activeFacilityId)) {
+          onboardMarks.set(chatId, now);
+          await sendOnboardingMenu(ctx);
+        }
+      }
     }
-    return next();
-  } catch {
-    return next();
+  } catch (e) {
+    console.error('MIDDLEWARE_ERR', e.message);
   }
+  return next();
 });
 
 // === Commands ===
@@ -196,8 +220,10 @@ bot.action('back_main', async (ctx) => {
 bot.action('start_reg_fac', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(()=>{});
-    flows.set(ctx.from.id, { flow: 'reg_fac', step: 1, data: {} });
-    await ctx.editMessageText('Facility Registration (1/3)\nEnter facility name:');
+    flows.set(ctx.from.id, { flow: 'reg_fac', step: 1, data: {}, ts: Date.now() });
+    // edit if possible, fall back to reply
+    try { await ctx.editMessageText('Facility Registration (1/3)\nEnter facility name:'); }
+    catch { await ctx.reply('Facility Registration (1/3)\nEnter facility name:'); }
   } catch {
     await ctx.reply('Failed to start registration.');
   }
@@ -263,11 +289,13 @@ bot.on('text', async (ctx, next) => {
       const text = ctx.message.text.trim();
       if (s.step === 1) {
         s.data.department = text.toLowerCase();
-        return (s.step=2, flows.set(ctx.from.id,s), ctx.reply('Priority? (low/medium/high)'));
+        s.step = 2; flows.set(ctx.from.id, s);
+        return ctx.reply('Priority? (low/medium/high)');
       }
       if (s.step === 2) {
         s.data.priority = text.toLowerCase();
-        return (s.step=3, flows.set(ctx.from.id,s), ctx.reply('Describe the issue:'));
+        s.step = 3; flows.set(ctx.from.id, s);
+        return ctx.reply('Describe the issue:');
       }
       if (s.step === 3) {
         const { user } = await requireMembership(ctx);
@@ -329,7 +357,7 @@ bot.on('callback_query', async (ctx, next) => {
     const facilityId = BigInt(data.replace('join_fac_', ''));
     const f = await prisma.facility.findUnique({ where: { id: facilityId } });
     if (!f || !f.isActive) return ctx.answerCbQuery('Facility not available', { show_alert: true });
-    flows.set(ctx.from.id, { flow: 'join', step: 2, facilityId });
+    flows.set(ctx.from.id, { flow: 'join', step: 2, facilityId, ts: Date.now() });
     const rows = [[
       { text: '👤 User',        callback_data: 'role_user' },
       { text: '🛠️ Technician', callback_data: 'role_technician' },
@@ -423,7 +451,7 @@ bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
 bot.action('wo:start_new', async (ctx) => {
   await ctx.answerCbQuery().catch(()=>{});
   await requireMembership(ctx);
-  flows.set(ctx.from.id, { flow: 'new_wo', step: 1, data: {} });
+  flows.set(ctx.from.id, { flow: 'new_wo', step: 1, data: {}, ts: Date.now() });
   return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
 });
 
@@ -491,7 +519,7 @@ bot.action(/^wo:status\|(\d+)\|(Open|In Progress|Closed)$/, async (ctx) => {
   return ctx.reply(`✅ WO #${id.toString()} updated: ${old} → ${newStatus}`);
 });
 
-// === Master Panel (kept) ===
+// === Master Panel (preserved) ===
 bot.command('master', async (ctx) => {
   if (!isMaster(ctx)) return ctx.reply('Only master can access this panel.');
   try {
@@ -524,7 +552,8 @@ Choose:`;
 
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery?.data || '';
-  if (!['mf_list','mj_list','mf_list_fac'].some(p => data.startsWith(p)) && !data.startsWith('mf_appr_') && !data.startsWith('mj_')) return next();
+  const isMine = ['mf_list','mj_list','mf_list_fac'].some(p => data.startsWith(p)) || data.startsWith('mf_appr_') || data.startsWith('mj_');
+  if (!isMine) return next();
   if (!isMaster(ctx)) { await ctx.answerCbQuery('Not allowed', { show_alert: true }); return; }
 
   if (data === 'mf_list') {
@@ -557,7 +586,7 @@ bot.on('callback_query', async (ctx, next) => {
     const lines = await Promise.all(reqs.map(async r => {
       const u = await prisma.user.findUnique({ where: { id: r.userId } });
       const f = r.toFacilityId ? await prisma.facility.findUnique({ where: { id: r.toFacilityId } }) : null;
-      return `• req#${r.id.toString()} — tg:${u?.tgId?.toString() ?? '?'} → ${f?.name ?? '?'}`
+      return `• req#${r.id.toString()} — tg:${u?.tgId?.toString() ?? '?'} → ${f?.name ?? '?'}`;
     }));
     await ctx.editMessageText(`Pending Join Requests:\n${lines.join('\n')}\n\nChoose:`, kb(reqs.map(r => ([
       { text: `✅ Approve #${r.id.toString()}`, callback_data: `mj_appr_${r.id.toString()}` },
@@ -609,12 +638,27 @@ bot.on('callback_query', async (ctx, next) => {
   }
 });
 
-// === Webhook bootstrap ===
-const webhookUrl = `${CONFIG.PUBLIC_URL}${CONFIG.WEBHOOK_PATH}`;
-bot.telegram.setWebhook(webhookUrl, {
-  allowed_updates: CONFIG.ALLOWED_UPDATES,
-  drop_pending_updates: false
-}).catch(()=>{});
+// === New Issue entry point ===
+bot.action('wo:start_new', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  await requireMembership(ctx);
+  flows.set(ctx.from.id, { flow: 'new_wo', step: 1, data: {}, ts: Date.now() });
+  return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
+});
+
+// === Webhook bootstrap (idempotent) ===
+if (!g._webhookConfigured) {
+  g._webhookConfigured = true;
+  const webhookUrl = `${CONFIG.PUBLIC_URL}${CONFIG.WEBHOOK_PATH}`;
+  bot.telegram.setWebhook(webhookUrl, {
+    allowed_updates: CONFIG.ALLOWED_UPDATES,
+    drop_pending_updates: false
+  }).then(() => {
+    console.log('✅ Webhook configured:', webhookUrl);
+  }).catch((err) => {
+    console.error('❌ Webhook setup failed:', err?.message || err);
+  });
+}
 
 const handler = bot.webhookCallback(CONFIG.WEBHOOK_PATH);
 
