@@ -242,19 +242,42 @@ if (!token || !publicUrl) {
       try {
         await ctx.answerCbQuery().catch(() => {});
         beginFlow(ctx); // ← Important: mark that we're entering a flow
+
+        // جِلب منشآت قابلة للانضمام:
+        // - المفعّلة isActive=true
+        // - أو المعلّمة افتراضيًا isDefault=true (حتى لو غير مفعّلة)
         const facilities = await prisma.facility.findMany({
-          where: { isActive: true }, orderBy: { createdAt: 'desc' }, take: 25
+          where: {
+            OR: [{ isActive: true }, { isDefault: true }]
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 50
         });
+
         if (!facilities.length) {
           endFlow(ctx);
-          return ctx.answerCbQuery('No active facilities available', { show_alert: true });
+          await ctx.answerCbQuery('No facilities available to join', { show_alert: true }).catch(()=>{});
+          await ctx.reply('No facilities are available to join yet. Ask the master to activate or mark one as default.');
+          return;
         }
-        const rows = facilities.map(f => [{ text: `🏢 ${f.name}`, callback_data: `join_fac_${f.id.toString()}` }]);
-        await ctx.editMessageText('Choose facility to join:', kb(rows));
-        return;
+
+        const rows = facilities.map(f => ([
+          { text: `🏢 ${f.name}${f.isDefault ? ' • default' : ''}${!f.isActive ? ' (inactive)' : ''}`, callback_data: `join_fac_${f.id.toString()}` }
+        ]));
+
+        // حاول تعديل الرسالة؛ ولو فشل (مثلاً الرسالة ليست من البوت) استخدم reply
+        try {
+          await ctx.editMessageText('Choose facility to join:', {
+            reply_markup: { inline_keyboard: rows }
+          });
+        } catch {
+          await ctx.reply('Choose facility to join:', {
+            reply_markup: { inline_keyboard: rows }
+          });
+        }
       } catch (e) {
         endFlow(ctx);
-        return ctx.reply('Failed to start join flow. Please try again.');
+        await ctx.reply('Failed to start join flow. Please try again.');
       }
     }
     return next();
@@ -331,21 +354,53 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
 
   // === Master Panel (/master) (NEW) ===
   bot.command('master', async (ctx) => {
-    if (!isMaster(ctx)) return ctx.reply('Not allowed');
-    const [pf, pr] = await Promise.all([
-      prisma.facility.count({ where: { isActive: false } }),
-      prisma.facilitySwitchRequest.count({ where: { status: 'pending' } }),
-    ]);
-    const text = `🛠️ Master Panel\n—\nPending Facilities: ${pf}\nPending Join Requests: ${pr}\n\nChoose action:`;
-    return ctx.reply(text, kb([
-      [{ text: '🏢 Pending Facilities',           callback_data: 'mf_list' }],
-      [{ text: '👥 Pending Join Requests',    callback_data: 'mj_list' }]
-    ]));
+    try {
+      // حراسة صلاحيات الماستر (حسب مشروعك)
+      if (String(ctx.from.id) !== String(process.env.MASTER_ID)) {
+        return ctx.reply('Only master can access this panel.');
+      }
+
+      // عدّادات سريعة
+      const [pendingFacilities, activeFacilities, totalFacilities] = await Promise.all([
+        prisma.facility.count({ where: { isActive: false } }),
+        prisma.facility.count({ where: { isActive: true } }),
+        prisma.facility.count()
+      ]);
+
+      const [pendingJoinRequests] = await Promise.all([
+        prisma.facilitySwitchRequest.count({ where: { status: 'pending' } }).catch(() => 0) // لو عندك جدول/منطق آخر للطلبات عدّله هنا
+      ]);
+
+      const text =
+        '🛠️ Master Panel\n' +
+        '—\n' +
+        `Pending Facilities: ${pendingFacilities}\n` +
+        `Pending Join Requests: ${pendingJoinRequests}\n` +
+        `Active Facilities: ${activeFacilities}\n` +
+        `Total Facilities: ${totalFacilities}\n\n` +
+        'Choose action:';
+
+      const kb = {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🏢 Pending Facilities', callback_data: 'mf_list' }],
+            [{ text: '👥 Pending Join Requests', callback_data: 'mj_list' }],
+            // (اختياري) زر لعرض كل المنشآت
+            [{ text: '📋 List Facilities (active & default)', callback_data: 'mf_list_fac' }]
+          ]
+        }
+      };
+
+      await ctx.reply(text, kb);
+    } catch (e) {
+      console.error('master panel error', e);
+      await ctx.reply('Failed to open master panel.');
+    }
   });
 
   bot.on('callback_query', async (ctx, next) => {
     const data = ctx.callbackQuery?.data || '';
-    if (!['mf_list','mj_list'].includes(data) && !data.startsWith('mf_') && !data.startsWith('mj_')) return next();
+    if (!['mf_list','mj_list','mf_list_fac'].includes(data) && !data.startsWith('mf_') && !data.startsWith('mj_')) return next();
     if (!isMaster(ctx)) {
       await ctx.answerCbQuery('Not allowed', { show_alert: true });
       return;
@@ -421,6 +476,32 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
       if (user?.tgId) { try { await bot.telegram.sendMessage(user.tgId.toString(), `⛔ Your join request has been denied.`); } catch {} }
       await ctx.answerCbQuery('Denied');
       return ctx.editMessageText(`⛔ Denied req #${rid.toString()}`);
+    }
+
+    // List facilities for master (active OR default)
+    if (data === 'mf_list_fac') {
+      try {
+        await ctx.answerCbQuery().catch(()=>{});
+        if (String(ctx.from.id) !== String(process.env.MASTER_ID)) return;
+
+        const facs = await prisma.facility.findMany({
+          where: { OR: [{ isActive: true }, { isDefault: true }] },
+          orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+          take: 100
+        });
+
+        if (!facs.length) {
+          await ctx.reply('No facilities (active/default) found.');
+          return;
+        }
+
+        const lines = facs.map(f =>
+          `• ${f.name}  — ${f.isActive ? 'active' : 'inactive'}${f.isDefault ? ' • default' : ''}`
+        );
+        await ctx.reply(lines.join('\n'));
+      } catch (e) {
+        await ctx.reply('Failed to list facilities.');
+      }
     }
   });
 
