@@ -77,20 +77,59 @@ function rlOk(userId) {
 async function showMainMenu(ctx) {
   const me = await ensureUser(ctx);
   const inline = [];
-  if (me.status !== 'active' || !me.activeFacilityId) {
-    inline.push([Markup.button.callback('🆕 Register Facility', 'start_reg_fac')]);
-    inline.push([Markup.button.callback('👥 Join Facility', 'start_join')]);
-  } else {
+  
+  // === SECTION 1: Quick Actions ===
+  if (me.status === 'active' && me.activeFacilityId) {
     inline.push([
       Markup.button.callback('➕ New Issue', 'wo:start_new'),
       Markup.button.callback('📋 My Issues', 'wo:my|1|all')
     ]);
-    const member = await prisma.facilityMember.findFirst({ where: { userId: me.id, facilityId: me.activeFacilityId } });
+    
+    // Check if user can manage requests
+    const member = await prisma.facilityMember.findFirst({ 
+      where: { userId: me.id, facilityId: me.activeFacilityId } 
+    });
     const canManage = member && ['facility_admin','supervisor','technician'].includes(member.role);
-    if (canManage) inline.push([Markup.button.callback('🔧 Manage Requests', 'wo:manage|1|all')]);
+    
+    if (canManage) {
+      inline.push([Markup.button.callback('🔧 Manage Requests', 'wo:manage|1|all')]);
+    }
+  } else {
+    // User needs onboarding
+    inline.push([
+      Markup.button.callback('🆕 Register Facility', 'start_reg_fac'),
+      Markup.button.callback('👥 Join Facility', 'start_join')
+    ]);
   }
-  inline.push([Markup.button.callback('ℹ️ Help', 'help')]);
-  return ctx.reply('Choose an action:', kb(inline));
+  
+  // === SECTION 2: Profile & Settings ===
+  inline.push([
+    Markup.button.callback('👤 My Profile', 'profile'),
+    Markup.button.callback('⚙️ Settings', 'settings')
+  ]);
+  
+  // === SECTION 3: Information & Help ===
+  inline.push([
+    Markup.button.callback('ℹ️ Help', 'help'),
+    Markup.button.callback('📊 Statistics', 'stats')
+  ]);
+  
+  // === SECTION 4: Master Panel (if master) ===
+  if (isMaster(ctx)) {
+    inline.push([Markup.button.callback('🛠️ Master Panel', 'master_panel')]);
+  }
+  
+  // === SECTION 5: System Status ===
+  inline.push([Markup.button.callback('🟢 System Status', 'ping')]);
+  
+  return ctx.reply(
+    `🏢 **FixFlow - Maintenance Management System**\n\n` +
+    `Welcome back! Choose an action from the menu below:`,
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: inline }
+    }
+  );
 }
 
 async function sendOnboardingMenu(ctx) {
@@ -204,10 +243,437 @@ bot.command('me', async (ctx) => {
   }
 });
 
-// === Callback: Help button pipes to /help neatly ===
+// === Enhanced Menu Actions ===
+
+// Profile button
+bot.action('profile', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  try {
+    const user = await ensureUser(ctx);
+    const active = user.activeFacilityId
+      ? await prisma.facility.findUnique({ where: { id: user.activeFacilityId } })
+      : null;
+    const member = active
+      ? await prisma.facilityMember.findFirst({ where: { userId: user.id, facilityId: active.id } })
+      : null;
+
+    const lines = [
+      '👤 **Your Profile**',
+      `**ID:** ${user.id.toString()}`,
+      `**Telegram:** ${ctx.from.id}`,
+      `**Status:** ${user.status}`,
+      `**Active Facility:** ${active ? active.name : '—'}`,
+      `**Role:** ${member?.role || '—'}`,
+      user.requestedRole ? `**Requested Role:** ${user.requestedRole}` : null,
+      '',
+      '**Quick Actions:**'
+    ].filter(Boolean);
+
+    const buttons = [
+      [{ text: '📊 My Statistics', callback_data: 'my_stats' }],
+      [{ text: '🔄 Switch Facility', callback_data: 'switch_facility' }],
+      [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
+    ];
+
+    await ctx.editMessageText(
+      lines.join('\n'),
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (e) {
+    console.error('PROFILE_ERR', e);
+    await ctx.reply('Failed to load profile.');
+  }
+});
+
+// Settings button
+bot.action('settings', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const buttons = [
+    [{ text: '🔔 Notifications', callback_data: 'settings_notifications' }],
+    [{ text: '🌐 Language', callback_data: 'settings_language' }],
+    [{ text: '📱 Theme', callback_data: 'settings_theme' }],
+    [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
+  ];
+  
+  await ctx.editMessageText(
+    '⚙️ **Settings**\n\nConfigure your preferences:',
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+// Statistics button
+bot.action('stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  try {
+    const { user } = await requireMembership(ctx);
+    
+    const [totalCreated, openIssues, inProgressIssues, closedIssues] = await Promise.all([
+      prisma.workOrder.count({ where: { createdByUserId: user.id } }),
+      prisma.workOrder.count({ where: { createdByUserId: user.id, status: 'open' } }),
+      prisma.workOrder.count({ where: { createdByUserId: user.id, status: 'in_progress' } }),
+      prisma.workOrder.count({ where: { createdByUserId: user.id, status: 'closed' } })
+    ]);
+
+    const member = await prisma.facilityMember.findFirst({ 
+      where: { userId: user.id, facilityId: user.activeFacilityId } 
+    });
+    
+    let facilityStats = '';
+    if (member && ['facility_admin','supervisor','technician'].includes(member.role)) {
+      const [facilityTotal, facilityOpen, facilityInProgress, facilityClosed] = await Promise.all([
+        prisma.workOrder.count({ where: { facilityId: user.activeFacilityId } }),
+        prisma.workOrder.count({ where: { facilityId: user.activeFacilityId, status: 'open' } }),
+        prisma.workOrder.count({ where: { facilityId: user.activeFacilityId, status: 'in_progress' } }),
+        prisma.workOrder.count({ where: { facilityId: user.activeFacilityId, status: 'closed' } })
+      ]);
+      
+      facilityStats = `\n**🏢 Facility Statistics:**\n` +
+        `• Total: ${facilityTotal}\n` +
+        `• Open: ${facilityOpen}\n` +
+        `• In Progress: ${facilityInProgress}\n` +
+        `• Closed: ${facilityClosed}`;
+    }
+
+    const text = `📊 **Statistics**\n\n` +
+      `**👤 My Statistics:**\n` +
+      `• Total Created: ${totalCreated}\n` +
+      `• Open: ${openIssues}\n` +
+      `• In Progress: ${inProgressIssues}\n` +
+      `• Closed: ${closedIssues}` +
+      facilityStats;
+
+    const buttons = [
+      [{ text: '📈 Detailed Report', callback_data: 'detailed_stats' }],
+      [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
+    ];
+
+    await ctx.editMessageText(
+      text,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (e) {
+    console.error('STATS_ERR', e);
+    await ctx.reply('Failed to load statistics.');
+  }
+});
+
+// Master Panel button (redirects to /master command)
+bot.action('master_panel', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  bot.handleUpdate({ ...ctx.update, message: { ...ctx.update.callback_query.message, text: '/master' } });
+});
+
+// Help button (enhanced)
 bot.action('help', async (ctx) => {
   await ctx.answerCbQuery().catch(()=>{});
-  bot.handleUpdate({ ...ctx.update, message: { ...ctx.update.callback_query.message, text: '/help' } });
+  const text = `🆘 **FixFlow Help**\n\n` +
+    `**📱 Main Commands:**\n` +
+    `• /start — Main menu\n` +
+    `• /me — Your profile & facility\n` +
+    `• /ping — Bot status\n` +
+    `• /help — This help\n\n` +
+    `**🚀 Getting Started:**\n` +
+    `1) Register a facility (owner) or Join an active facility\n` +
+    `2) Create maintenance requests\n` +
+    `3) Track & manage issues (admins/techs)\n\n` +
+    `**🔧 Features:**\n` +
+    `• Create detailed work orders with images\n` +
+    `• Assign tasks to technicians\n` +
+    `• Track status changes with notifications\n` +
+    `• View statistics and reports\n\n` +
+    `**❓ Need access?** Ask your facility admin.`;
+
+  const buttons = [
+    [{ text: '📖 User Guide', callback_data: 'user_guide' }],
+    [{ text: '🎥 Tutorial', callback_data: 'tutorial' }],
+    [{ text: '📞 Contact Support', callback_data: 'contact_support' }],
+    [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
+  ];
+
+  await ctx.editMessageText(
+    text,
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+// === Additional Menu Actions ===
+
+// My Statistics (from profile)
+bot.action('my_stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  try {
+    const { user } = await requireMembership(ctx);
+    
+    const [totalCreated, openIssues, inProgressIssues, closedIssues] = await Promise.all([
+      prisma.workOrder.count({ where: { createdByUserId: user.id } }),
+      prisma.workOrder.count({ where: { createdByUserId: user.id, status: 'open' } }),
+      prisma.workOrder.count({ where: { createdByUserId: user.id, status: 'in_progress' } }),
+      prisma.workOrder.count({ where: { createdByUserId: user.id, status: 'closed' } })
+    ]);
+
+    const text = `📊 **My Statistics**\n\n` +
+      `**Total Created:** ${totalCreated}\n` +
+      `**Open Issues:** ${openIssues}\n` +
+      `**In Progress:** ${inProgressIssues}\n` +
+      `**Closed:** ${closedIssues}\n\n` +
+      `**Completion Rate:** ${totalCreated > 0 ? Math.round((closedIssues / totalCreated) * 100) : 0}%`;
+
+    const buttons = [
+      [{ text: '📈 View My Issues', callback_data: 'wo:my|1|all' }],
+      [{ text: '⬅️ Back to Profile', callback_data: 'profile' }]
+    ];
+
+    await ctx.editMessageText(
+      text,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (e) {
+    console.error('MY_STATS_ERR', e);
+    await ctx.reply('Failed to load statistics.');
+  }
+});
+
+// Switch Facility
+bot.action('switch_facility', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  try {
+    const user = await ensureUser(ctx);
+    const memberships = await prisma.facilityMember.findMany({
+      where: { userId: user.id },
+      include: { facility: true },
+      take: 10
+    });
+
+    if (!memberships.length) {
+      return ctx.editMessageText(
+        '❌ **No Facilities Found**\n\nYou are not a member of any facilities.',
+        { 
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '⬅️ Back to Profile', callback_data: 'profile' }]] }
+        }
+      );
+    }
+
+    const buttons = memberships.map(m => ([
+      { 
+        text: `${m.facility.name}${m.facility.id === user.activeFacilityId ? ' ✅' : ''}`, 
+        callback_data: `switch_to_${m.facility.id}` 
+      }
+    ]));
+    buttons.push([{ text: '⬅️ Back to Profile', callback_data: 'profile' }]);
+
+    await ctx.editMessageText(
+      '🔄 **Switch Active Facility**\n\nSelect a facility to switch to:',
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (e) {
+    console.error('SWITCH_FACILITY_ERR', e);
+    await ctx.reply('Failed to load facilities.');
+  }
+});
+
+// Settings sub-actions
+bot.action('settings_notifications', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const buttons = [
+    [{ text: '🔔 Enable All', callback_data: 'notif_enable_all' }],
+    [{ text: '🔕 Disable All', callback_data: 'notif_disable_all' }],
+    [{ text: '⚙️ Customize', callback_data: 'notif_customize' }],
+    [{ text: '⬅️ Back to Settings', callback_data: 'settings' }]
+  ];
+  
+  await ctx.editMessageText(
+    '🔔 **Notification Settings**\n\nConfigure your notification preferences:',
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+bot.action('settings_language', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const buttons = [
+    [{ text: '🇺🇸 English', callback_data: 'lang_en' }],
+    [{ text: '🇪🇸 Español', callback_data: 'lang_es' }],
+    [{ text: '🇫🇷 Français', callback_data: 'lang_fr' }],
+    [{ text: '⬅️ Back to Settings', callback_data: 'settings' }]
+  ];
+  
+  await ctx.editMessageText(
+    '🌐 **Language Settings**\n\nSelect your preferred language:',
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+bot.action('settings_theme', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const buttons = [
+    [{ text: '🌞 Light Theme', callback_data: 'theme_light' }],
+    [{ text: '🌙 Dark Theme', callback_data: 'theme_dark' }],
+    [{ text: '🔄 Auto', callback_data: 'theme_auto' }],
+    [{ text: '⬅️ Back to Settings', callback_data: 'settings' }]
+  ];
+  
+  await ctx.editMessageText(
+    '📱 **Theme Settings**\n\nChoose your preferred theme:',
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+// Help sub-actions
+bot.action('user_guide', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const text = `📖 **User Guide**\n\n` +
+    `**Creating Work Orders:**\n` +
+    `1. Click "➕ New Issue"\n` +
+    `2. Select issue type\n` +
+    `3. Choose department\n` +
+    `4. Set priority\n` +
+    `5. Add location\n` +
+    `6. Assign technician (optional)\n` +
+    `7. Describe the issue\n` +
+    `8. Add photo (optional)\n` +
+    `9. Review and confirm\n\n` +
+    `**Managing Issues:**\n` +
+    `• View your issues in "📋 My Issues"\n` +
+    `• Admins can manage all issues\n` +
+    `• Update status as work progresses\n` +
+    `• Receive notifications on changes`;
+
+  const buttons = [
+    [{ text: '🎥 Watch Tutorial', callback_data: 'tutorial' }],
+    [{ text: '⬅️ Back to Help', callback_data: 'help' }]
+  ];
+
+  await ctx.editMessageText(
+    text,
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+bot.action('tutorial', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const text = `🎥 **Tutorial**\n\n` +
+    `**Video Tutorials:**\n` +
+    `• Getting Started: https://example.com/start\n` +
+    `• Creating Issues: https://example.com/create\n` +
+    `• Managing Requests: https://example.com/manage\n\n` +
+    `**Quick Tips:**\n` +
+    `• Use /start to access main menu\n` +
+    `• Add photos to issues for better context\n` +
+    `• Check statistics regularly\n` +
+    `• Enable notifications for updates`;
+
+  const buttons = [
+    [{ text: '📖 Read Guide', callback_data: 'user_guide' }],
+    [{ text: '⬅️ Back to Help', callback_data: 'help' }]
+  ];
+
+  await ctx.editMessageText(
+    text,
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+bot.action('contact_support', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const text = `📞 **Contact Support**\n\n` +
+    `**Need Help?**\n` +
+    `• Email: support@fixflow.com\n` +
+    `• Telegram: @fixflow_support\n` +
+    `• Phone: +1-555-FIXFLOW\n\n` +
+    `**Response Time:**\n` +
+    `• Email: 24 hours\n` +
+    `• Telegram: 2-4 hours\n` +
+    `• Phone: Immediate\n\n` +
+    `**Before Contacting:**\n` +
+    `• Check the help section\n` +
+    `• Review user guide\n` +
+    `• Try the tutorial`;
+
+  const buttons = [
+    [{ text: '📧 Send Email', callback_data: 'support_email' }],
+    [{ text: '💬 Telegram Chat', callback_data: 'support_telegram' }],
+    [{ text: '⬅️ Back to Help', callback_data: 'help' }]
+  ];
+
+  await ctx.editMessageText(
+    text,
+    { 
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    }
+  );
+});
+
+// Switch to specific facility
+bot.action(/^switch_to_(\d+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  try {
+    const facilityId = BigInt(ctx.match[1]);
+    const user = await ensureUser(ctx);
+    
+    // Check if user is member of this facility
+    const membership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, facilityId }
+    });
+    
+    if (!membership) {
+      return ctx.answerCbQuery('You are not a member of this facility', { show_alert: true });
+    }
+    
+    // Update active facility
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { activeFacilityId: facilityId }
+    });
+    
+    const facility = await prisma.facility.findUnique({ where: { id: facilityId } });
+    
+    await ctx.editMessageText(
+      `✅ **Facility Switched**\n\nYou are now active in: **${facility?.name}**`,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { 
+          inline_keyboard: [[{ text: '⬅️ Back to Profile', callback_data: 'profile' }]] 
+        }
+      }
+    );
+  } catch (e) {
+    console.error('SWITCH_TO_FACILITY_ERR', e);
+    await ctx.answerCbQuery('Failed to switch facility', { show_alert: true });
+  }
 });
 
 // === Back to main ===
