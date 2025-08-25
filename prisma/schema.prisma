@@ -20,9 +20,9 @@ model User {
   activeFacilityId BigInt?
   memberships      FacilityMember[]
   switchRequests   FacilitySwitchRequest[]
+  statusUpdates    StatusHistory[]
   activeFacility   Facility?               @relation(fields: [activeFacilityId], references: [id])
   workOrders       WorkOrder[]             @relation("WO_ByUser")
-  statusUpdates    StatusHistory[]
 
   @@index([activeFacilityId])
 }
@@ -81,14 +81,14 @@ model WorkOrder {
 }
 
 model StatusHistory {
-  id               BigInt    @id @default(autoincrement())
-  workOrderId      BigInt
-  oldStatus        String
-  newStatus        String
-  updatedByUserId  BigInt
-  createdAt        DateTime  @default(now())
-  workOrder        WorkOrder @relation(fields: [workOrderId], references: [id])
-  updatedByUser    User      @relation(fields: [updatedByUserId], references: [id])
+  id              BigInt    @id @default(autoincrement())
+  workOrderId     BigInt
+  oldStatus       String
+  newStatus       String
+  createdAt       DateTime  @default(now())
+  updatedByUserId BigInt
+  updatedByUser   User      @relation(fields: [updatedByUserId], references: [id])
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id])
 
   @@index([workOrderId, createdAt])
 }
