@@ -135,15 +135,3 @@ enum PlanTier {
   Pro
   Business
 }
-
-model ChatLog {
-  id        BigInt   @id @default(autoincrement())
-  message   String
-  response  String
-  source    String   @default("web") // "web" or "telegram"
-  userId    BigInt?
-  timestamp DateTime @default(now())
-  
-  @@index([timestamp])
-  @@index([source])
-}
