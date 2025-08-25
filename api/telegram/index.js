@@ -29,7 +29,14 @@ if (!CONFIG.TOKEN || !CONFIG.PUBLIC_URL) {
 
 // === Singletons on Vercel instance ===
 const g = globalThis;
-const prisma = g._prisma ?? new PrismaClient({ log: ['error'] });
+const prisma = g._prisma ?? new PrismaClient({ 
+  log: ['error'],
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+    }
+  }
+});
 if (!g._prisma) g._prisma = prisma;
 
 const flows = g._flows ?? new Map(); // userId -> { flow, step, data, ts }
@@ -282,7 +289,8 @@ bot.command('me', async (ctx) => {
 
 // Profile button
 bot.action('profile', async (ctx) => {
-  await ctx.answerCbQuery().catch(()=>{});
+  // Answer callback immediately
+  await ctx.answerCbQuery('Loading profile...').catch(()=>{});
   try {
     const user = await ensureUser(ctx);
     const active = user.activeFacilityId
@@ -325,6 +333,7 @@ bot.action('profile', async (ctx) => {
 
 // Settings button
 bot.action('settings', async (ctx) => {
+  // Answer callback immediately
   await ctx.answerCbQuery().catch(()=>{});
   const buttons = [
     [{ text: '🔔 Notifications', callback_data: 'settings_notifications' }],
@@ -344,9 +353,28 @@ bot.action('settings', async (ctx) => {
 
 // Statistics button
 bot.action('stats', async (ctx) => {
-  await ctx.answerCbQuery().catch(()=>{});
+  // Answer callback immediately to prevent timeout
+  await ctx.answerCbQuery('Loading statistics...').catch(()=>{});
+  
   try {
-    const { user } = await requireMembership(ctx);
+    const user = await ensureUser(ctx);
+    
+    // Check if user has active facility
+    if (!user.activeFacilityId) {
+      return ctx.editMessageText(
+        '❌ **No Active Facility**\n\nYou need to join or register a facility first.',
+        { 
+          parse_mode: 'Markdown',
+          reply_markup: { 
+            inline_keyboard: [
+              [{ text: '🆕 Register Facility', callback_data: 'start_reg_fac' }],
+              [{ text: '👥 Join Facility', callback_data: 'start_join' }],
+              [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
+            ]
+          }
+        }
+      );
+    }
     
     const [totalCreated, openIssues, inProgressIssues, closedIssues] = await Promise.all([
       prisma.workOrder.count({ where: { createdByUserId: user.id } }),
@@ -401,7 +429,7 @@ bot.action('stats', async (ctx) => {
           reply_markup: { inline_keyboard: buttons }
         }
       );
-  } catch (e) {
+    } catch (editErr) {
       // Fallback to reply if edit fails
       await ctx.reply(
         text,
@@ -425,6 +453,7 @@ bot.action('master_panel', async (ctx) => {
 
 // Help button (enhanced)
 bot.action('help', async (ctx) => {
+  // Answer callback immediately
   await ctx.answerCbQuery().catch(()=>{});
   const text = `🆘 **FixFlow Help**\n\n` +
     `**📱 Main Commands:**\n` +
@@ -463,7 +492,8 @@ bot.action('help', async (ctx) => {
 
 // My Statistics (from profile)
 bot.action('my_stats', async (ctx) => {
-  await ctx.answerCbQuery().catch(()=>{});
+  // Answer callback immediately
+  await ctx.answerCbQuery('Loading your statistics...').catch(()=>{});
   try {
     const { user } = await requireMembership(ctx);
     
@@ -501,7 +531,8 @@ bot.action('my_stats', async (ctx) => {
 
 // Switch Facility
 bot.action('switch_facility', async (ctx) => {
-  await ctx.answerCbQuery().catch(()=>{});
+  // Answer callback immediately
+  await ctx.answerCbQuery('Loading facilities...').catch(()=>{});
   try {
     const user = await ensureUser(ctx);
     const memberships = await prisma.facilityMember.findMany({
@@ -1052,10 +1083,15 @@ bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
 });
 
 bot.action('wo:start_new', async (ctx) => {
+  // Answer callback immediately
   await ctx.answerCbQuery().catch(()=>{});
-  await requireMembership(ctx);
-  flows.set(ctx.from.id, { flow: 'new_wo', step: 1, data: {}, ts: Date.now() });
-  return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
+  try {
+    await requireMembership(ctx);
+    flows.set(ctx.from.id, { flow: 'new_wo', step: 1, data: {}, ts: Date.now() });
+    return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
+  } catch (e) {
+    return ctx.reply('❌ You need to be a member of a facility to create work orders.');
+  }
 });
 
 bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
@@ -1536,6 +1572,14 @@ module.exports = async (req, res) => {
     res.statusCode = 200;
     return res.end('OK');
   }
+  
+  // Set response timeout to prevent hanging
+  res.setTimeout(25000, () => {
+    console.error('WEBHOOK_TIMEOUT', { body: req.body });
+    res.statusCode = 200;
+    res.end('OK');
+  });
+  
   try {
     return await handler(req, res);
   } catch (e) {
