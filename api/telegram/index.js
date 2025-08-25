@@ -53,6 +53,9 @@ const isMaster = (ctx) => String(ctx.from?.id || '') === CONFIG.MASTER_ID;
 const kb = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 
 async function ensureUser(ctx) {
+  if (!ctx.from?.id) {
+    throw new Error('No user ID found in context');
+  }
   const tgId = BigInt(ctx.from.id);
   let user = await prisma.user.findUnique({ where: { tgId } });
   if (!user) {
@@ -440,15 +443,59 @@ bot.action('stats', async (ctx) => {
       );
     }
   } catch (e) {
-    console.error('STATS_ERR', e);
-    await ctx.reply('❌ Failed to load statistics.');
+    console.error('STATS_ERR', e.stack || e.message || e);
+    try {
+      await ctx.editMessageText(
+        '❌ **Failed to load statistics**\n\nPlease try again later.',
+        { 
+          parse_mode: 'Markdown',
+          reply_markup: { 
+            inline_keyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]]
+          }
+        }
+      );
+    } catch (editErr) {
+      await ctx.reply('❌ Failed to load statistics. Please try again later.');
+    }
   }
 });
 
-// Master Panel button (redirects to /master command)
+// Master Panel button
 bot.action('master_panel', async (ctx) => {
   await ctx.answerCbQuery().catch(()=>{});
-  bot.handleUpdate({ ...ctx.update, message: { ...ctx.update.callback_query.message, text: '/master' } });
+  
+  if (!isMaster(ctx)) {
+    return ctx.reply('Only master can access this panel.');
+  }
+  
+  try {
+    const [pendingFacilities, activeFacilities, totalFacilities, pendingJoinRequests] = await Promise.all([
+      prisma.facility.count({ where: { isActive: false } }),
+      prisma.facility.count({ where: { isActive: true } }),
+      prisma.facility.count(),
+      prisma.facilitySwitchRequest.count({ where: { status: 'pending' } }).catch(()=>0),
+    ]);
+
+    const text =
+`🛠️ Master Panel
+Pending Facilities: ${pendingFacilities}
+Pending Join Requests: ${pendingJoinRequests}
+Active Facilities: ${activeFacilities}
+Total Facilities: ${totalFacilities}
+
+Choose:`;
+    const rows = [
+      [{ text: '🏢 Pending Facilities', callback_data: 'mf_list' }],
+      [{ text: '👥 Pending Join Requests', callback_data: 'mj_list' }],
+      [{ text: '📋 List Facilities (active/default)', callback_data: 'mf_list_fac' }],
+      [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
+    ];
+    
+    await ctx.editMessageText(text, kb(rows));
+  } catch (e) {
+    console.error('MASTER_PANEL_ERR', e);
+    await ctx.reply('Failed to open master panel.');
+  }
 });
 
 // Help button (enhanced)
