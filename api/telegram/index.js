@@ -707,14 +707,16 @@ if (!token || !publicUrl) {
         res.status(200).end(JSON.stringify({ webhookUrl, info }, null, 2));
         return;
       }
-      if (op === 'set') {
-        const del = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: false }));
-        const set = await safeCall(bot.telegram.setWebhook(webhookUrl /* , { secret_token: process.env.TG_SECRET } */));
-        const info = await safeCall(bot.telegram.getWebhookInfo());
-        res.setHeader('Content-Type', 'application/json');
-        res.status(200).end(JSON.stringify({ webhookUrl, deleted: del, set, info }, null, 2));
-        return;
-      }
+             if (op === 'set') {
+         const del = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: true }));
+         const set = await safeCall(bot.telegram.setWebhook(webhookUrl, {
+           allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member']
+         }));
+         const info = await safeCall(bot.telegram.getWebhookInfo());
+         res.setHeader('Content-Type', 'application/json');
+         res.status(200).end(JSON.stringify({ webhookUrl, deleted: del, set, info }, null, 2));
+         return;
+       }
       if (op === 'del') {
         const out = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: false }));
         res.setHeader('Content-Type', 'application/json');
