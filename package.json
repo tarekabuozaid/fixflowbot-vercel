@@ -13,14 +13,20 @@
     "postinstall": "prisma generate",
     "vercel-build": "prisma generate",
     "seed": "node scripts/seed.js",
-    "test": "node scripts/test-bot.js"
+    "test": "node scripts/test-bot.js",
+    "import": "ts-node scripts/import-xlsx.ts",
+    "verify": "node scripts/verify-import.js"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
     "node-fetch": "^3.3.2",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.16.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "prisma": "^5.10.0"
+    "prisma": "^5.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.5"
   }
 }
