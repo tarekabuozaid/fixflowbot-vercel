@@ -299,31 +299,40 @@ if (!token || !publicUrl) {
   bot.on('callback_query', async (ctx, next) => {
     const data = ctx.callbackQuery?.data || '';
     if (!data.startsWith('join_fac_')) return next();
-    const facilityId = BigInt(data.replace('join_fac_', ''));
-    const f = await prisma.facility.findUnique({ where: { id: facilityId } });
-    if (!f || !f.isActive) return ctx.answerCbQuery('Facility not available now', { show_alert: true });
-    state.set(ctx.from.id, { flow: 'join', step: 2, facilityId });
-    const rows = [
-      [
-        { text: '👤 User',        callback_data: 'role_user' },
-        { text: '🛠️ Technician', callback_data: 'role_technician' },
-        { text: '🧭 Supervisor',  callback_data: 'role_supervisor' },
-      ]
-    ];
-    await ctx.editMessageText(`Choose your role to join: ${f.name}`, kb(rows));
+    
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const facilityId = BigInt(data.replace('join_fac_', ''));
+      const f = await prisma.facility.findUnique({ where: { id: facilityId } });
+      if (!f || !f.isActive) return ctx.answerCbQuery('Facility not available now', { show_alert: true });
+      state.set(ctx.from.id, { flow: 'join', step: 2, facilityId });
+      const rows = [
+        [
+          { text: '👤 User',        callback_data: 'role_user' },
+          { text: '🛠️ Technician', callback_data: 'role_technician' },
+          { text: '🧭 Supervisor',  callback_data: 'role_supervisor' },
+        ]
+      ];
+      await ctx.editMessageText(`Choose your role to join: ${f.name}`, kb(rows));
+    } catch (e) {
+      console.error('JOIN_FAC_ERROR', e);
+      await ctx.answerCbQuery('Error selecting facility', { show_alert: true });
+    }
   });
 
   // Create join request as pending + notify master
   bot.on('callback_query', async (ctx, next) => {
     const data = ctx.callbackQuery?.data || '';
     if (!data.startsWith('role_')) return next();
-    const role = data.replace('role_', ''); // user | technician | supervisor
-    const s = state.get(ctx.from.id);
-    if (!s || s.flow !== 'join' || s.step !== 2) {
-      return ctx.answerCbQuery('Session expired, send /start again', { show_alert: true });
-    }
-    try {
-      const tgId = BigInt(ctx.from.id);
+    
+          await ctx.answerCbQuery().catch(() => {});
+      const role = data.replace('role_', ''); // user | technician | supervisor
+      const s = state.get(ctx.from.id);
+      if (!s || s.flow !== 'join' || s.step !== 2) {
+        return ctx.answerCbQuery('Session expired, send /start again', { show_alert: true });
+      }
+      try {
+        const tgId = BigInt(ctx.from.id);
       let user = await prisma.user.findUnique({ where: { tgId } });
       if (!user) {
         user = await prisma.user.create({
@@ -576,6 +585,7 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
       return;
     }
     if (data.startsWith('mf_appr_')) {
+      await ctx.answerCbQuery().catch(() => {});
       const [, , plan, fidStr] = data.split('_'); // ['mf','appr','Free','123']
       const facilityId = BigInt(fidStr);
       await prisma.facility.update({ where: { id: facilityId }, data: { isActive: true, planTier: plan } });
@@ -585,6 +595,7 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
 
     // Pending join requests
     if (data === 'mj_list') {
+      await ctx.answerCbQuery().catch(() => {});
       const reqs = await prisma.facilitySwitchRequest.findMany({
         where: { status: 'pending' }, take: 10, orderBy: { createdAt: 'asc' }
       });
@@ -604,6 +615,7 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
       return;
     }
     if (data.startsWith('mj_appr_')) {
+      await ctx.answerCbQuery().catch(() => {});
       const rid = BigInt(data.replace('mj_appr_', ''));
       const req = await prisma.facilitySwitchRequest.findUnique({ where: { id: rid } });
       if (!req) return ctx.answerCbQuery('Not found', { show_alert: true });
@@ -622,6 +634,7 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
       return ctx.editMessageText(`✅ Approved req #${rid.toString()}`);
     }
     if (data.startsWith('mj_den_')) {
+      await ctx.answerCbQuery().catch(() => {});
       const rid = BigInt(data.replace('mj_den_', ''));
       const req = await prisma.facilitySwitchRequest.findUnique({ where: { id: rid } });
       if (!req) return ctx.answerCbQuery('Not found', { show_alert: true });
