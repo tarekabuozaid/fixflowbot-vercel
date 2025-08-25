@@ -44,24 +44,7 @@ if (!token || !publicUrl) {
     console.error('TELEGRAM_ERROR', { err: err.message, from: ctx?.from?.id });
   });
 
-  // === 0) Fast ACK + Global logs for callback queries ===
-  bot.on('callback_query', async (ctx, next) => {
-    try {
-      // ACK فوري (يسكت الـ spinner حتى لو حصلت أخطاء لاحقًا)
-      await ctx.answerCbQuery().catch(() => {});
-    } catch (_) {}
 
-    try {
-      // لوج مفيد للتشخيص
-      const u = ctx.from?.id;
-      const data = ctx.callbackQuery?.data;
-      const type = ctx.updateType;
-      console.log('CBQ_IN', { u, type, data });
-    } catch (_) {}
-
-    // مرّر للـ handlers المتخصصة
-    return next();
-  });
 
   // Helper: edit-or-reply (لو فشلت editMessageText نعمل reply)
   async function safeEditOrReply(ctx, text, extra) {
@@ -683,72 +666,99 @@ if (!token || !publicUrl) {
     }
   });
 
-  // --- Webhook management (do NOT auto-set on every cold start) ---
-  const webhookUrl = `${publicUrl}${webhookPath}`;
+    // ===== Webhook bootstrap (single-set) + robust handler =====
+  const WEBHOOK_PATH = webhookPath; // '/api/telegram'
+  const WEBHOOK_URL  = `${publicUrl}${WEBHOOK_PATH}`;
+  const WEBHOOK_SECRET = process.env.TG_WEBHOOK_SECRET || ''; // اختياري
 
-  // Prepare one callback to use for incoming POST updates
-  const handle = bot.webhookCallback(webhookPath, { timeout: 9000 });
+  // جهة واحدة بس تضبط الويبهوك (وقت البارد ستارت)
+  let _webhookReady = false;
 
-  // Small helper to call Telegram API safely
-  async function safeCall(promise) {
-    try { return await promise; } catch (e) { return { _error: e?.message || String(e) }; }
+  async function ensureWebhook(bot) {
+    if (_webhookReady) return;
+    try {
+      const info = await bot.telegram.getWebhookInfo();
+      const sameUrl = info?.url === WEBHOOK_URL;
+      const needSet =
+        !sameUrl ||
+        !(info.allowed_updates || []).includes('callback_query') ||
+        (WEBHOOK_SECRET && info.secret_token !== WEBHOOK_SECRET);
+
+      if (needSet) {
+        await bot.telegram.setWebhook(WEBHOOK_URL, {
+          drop_pending_updates: false,
+          allowed_updates: ['message','callback_query','my_chat_member','chat_member'],
+          secret_token: WEBHOOK_SECRET || undefined,
+          max_connections: 40
+        });
+        console.log('WEBHOOK_SET_OK', { url: WEBHOOK_URL });
+      } else {
+        console.log('WEBHOOK_ALREADY_OK', { url: WEBHOOK_URL });
+      }
+      _webhookReady = true;
+    } catch (e) {
+      console.error('SET_WEBHOOK_ERR', e?.message || e);
+    }
   }
 
+  // لوج شامل للتحديثات قبل أي هاندلر
+  bot.use(async (ctx, next) => {
+    try {
+      const u = ctx.update || {};
+      if (u.callback_query) {
+        console.log('UPD_CALLBACK', {
+          from: ctx.from?.id, data: u.callback_query?.data, mid: u.callback_query?.message?.message_id
+        });
+        // نجاوب بسرعة عشان نمنع "Loading…"
+        await ctx.answerCbQuery().catch(()=>{});
+      } else if (u.message) {
+        const t = u.message.text || u.message.data || Object.keys(u.message);
+        console.log('UPD_MESSAGE', { from: ctx.from?.id, text: t });
+      } else {
+        console.log('UPD_OTHER', Object.keys(u));
+      }
+    } catch (_) {}
+    return next();
+  });
+
+  // Handler: يدعم raw body لو req.body مش موجود
+  const handle = bot.webhookCallback(WEBHOOK_PATH, {
+    secretToken: WEBHOOK_SECRET || undefined
+  });
+
   module.exports = async (req, res) => {
-    // 1) Management ops (GET with ?op=...)
-    if (req.method === 'GET') {
-      const op = (req.query?.op || req.query?.OP || '').toString().toLowerCase();
-
-      // Only master can use management ops (optional but recommended)
-      // Tip: hit it from your browser after you set MASTER_ID env.
-      if (op === 'get') {
-        const info = await safeCall(bot.telegram.getWebhookInfo());
-        res.setHeader('Content-Type', 'application/json');
-        res.status(200).end(JSON.stringify({ webhookUrl, info }, null, 2));
-        return;
-      }
-             if (op === 'set') {
-         const del = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: true }));
-         const set = await safeCall(bot.telegram.setWebhook(webhookUrl, {
-           allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member']
-         }));
-         const info = await safeCall(bot.telegram.getWebhookInfo());
-         res.setHeader('Content-Type', 'application/json');
-         res.status(200).end(JSON.stringify({ webhookUrl, deleted: del, set, info }, null, 2));
-         return;
-       }
-      if (op === 'del') {
-        const out = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: false }));
-        res.setHeader('Content-Type', 'application/json');
-        res.status(200).end(JSON.stringify({ deleted: out }, null, 2));
-        return;
-      }
-
-      // Health probe / default GET
-      res.status(200).end('OK');
-      return;
+    // Health for GET
+    if (req.method !== 'POST') {
+      res.statusCode = 200;
+      return res.end('OK');
     }
 
-    // 2) Incoming updates (POST from Telegram)
-    if (req.method === 'POST') {
-      // Optional: verify secret header if you configured secret_token above
-      // const secret = req.headers['x-telegram-bot-api-secret-token'];
-      // if (process.env.TG_SECRET && secret !== process.env.TG_SECRET) {
-      //   res.statusCode = 401; return res.end('Bad secret');
-      // }
+    // تأكد إن الويبهوك مضبوط (مرة واحدة)
+    await ensureWebhook(bot);
 
+    // Vercel أحيانًا مايبعّتش body جاهز → نقرأه يدويًا
+    if (!req.body || Object.keys(req.body).length === 0) {
       try {
-        return handle(req, res);
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (raw) req.body = JSON.parse(raw);
       } catch (e) {
-        console.error('WEBHOOK_HANDLE_ERR', e?.message);
-        res.statusCode = 200; // avoid retries storm; log will show the error
+        console.error('RAW_BODY_PARSE_ERR', e?.message || e);
+        // نرجّع 200 عشان تيليجرام ما تعيدش بلا نهاية
+        res.statusCode = 200;
         return res.end('OK');
       }
     }
 
-    // Everything else
-    res.statusCode = 200;
-    return res.end('OK');
+    try {
+      // مرر للتلغراف
+      return handle(req, res);
+    } catch (e) {
+      console.error('WEBHOOK_HANDLE_ERR', e?.message || e);
+      res.statusCode = 200;
+      return res.end('OK');
+    }
   };
 
   module.exports.config = { runtime: 'nodejs20' };
