@@ -192,7 +192,31 @@ bot.use(async (ctx, next) => {
 });
 
 // === Commands ===
-bot.command('ping', (ctx) => ctx.reply('Bot is alive ✅'));
+bot.command('ping', (ctx) => ctx.reply('🟢 **Bot is alive and running!** ✅', { parse_mode: 'Markdown' }));
+
+// Clean up command (for debugging)
+bot.command('cleanup', async (ctx) => {
+  if (!isMaster(ctx)) return ctx.reply('❌ Only master can use this command.');
+  
+  try {
+    // Clean up work orders with command-like descriptions
+    const result = await prisma.workOrder.updateMany({
+      where: {
+        description: {
+          startsWith: '/'
+        }
+      },
+      data: {
+        description: 'Cleaned up - no description'
+      }
+    });
+    
+    await ctx.reply(`🧹 **Cleanup Complete**\n\nUpdated ${result.count} work orders with invalid descriptions.`);
+  } catch (e) {
+    console.error('CLEANUP_ERR', e);
+    await ctx.reply('❌ Cleanup failed. Check logs.');
+  }
+});
 
 bot.command(['start','menu'], async (ctx) => {
   try { await showMainMenu(ctx); }
@@ -333,36 +357,52 @@ bot.action('stats', async (ctx) => {
         prisma.workOrder.count({ where: { facilityId: user.activeFacilityId, status: 'closed' } })
       ]);
       
+      const completionRate = facilityTotal > 0 ? Math.round((facilityClosed / facilityTotal) * 100) : 0;
       facilityStats = `\n**🏢 Facility Statistics:**\n` +
         `• Total: ${facilityTotal}\n` +
         `• Open: ${facilityOpen}\n` +
         `• In Progress: ${facilityInProgress}\n` +
-        `• Closed: ${facilityClosed}`;
+        `• Closed: ${facilityClosed}\n` +
+        `• Completion Rate: ${completionRate}%`;
     }
 
+    const myCompletionRate = totalCreated > 0 ? Math.round((closedIssues / totalCreated) * 100) : 0;
     const text = `📊 **Statistics**\n\n` +
       `**👤 My Statistics:**\n` +
       `• Total Created: ${totalCreated}\n` +
       `• Open: ${openIssues}\n` +
       `• In Progress: ${inProgressIssues}\n` +
-      `• Closed: ${closedIssues}` +
+      `• Closed: ${closedIssues}\n` +
+      `• Completion Rate: ${myCompletionRate}%` +
       facilityStats;
 
     const buttons = [
       [{ text: '📈 Detailed Report', callback_data: 'detailed_stats' }],
+      [{ text: '📋 View My Issues', callback_data: 'wo:my|1|all' }],
       [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }]
     ];
 
-    await ctx.editMessageText(
-      text,
-      { 
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: buttons }
-      }
-    );
+    try {
+      await ctx.editMessageText(
+        text,
+        { 
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons }
+        }
+      );
+    } catch (e) {
+      // Fallback to reply if edit fails
+      await ctx.reply(
+        text,
+        { 
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons }
+        }
+      );
+    }
   } catch (e) {
     console.error('STATS_ERR', e);
-    await ctx.reply('Failed to load statistics.');
+    await ctx.reply('❌ Failed to load statistics.');
   }
 });
 
@@ -934,7 +974,20 @@ bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
   const where = (filter === 'all') ? whereBase : { ...whereBase, status: filter.toLowerCase().replace(' ', '_') };
 
   const total = await prisma.workOrder.count({ where });
-  if (!total) return ctx.reply('No matching requests.');
+  if (!total) {
+    try {
+      await ctx.editMessageText(
+        `No matching requests found for filter: ${filter}`,
+        kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+      );
+    } catch {
+      await ctx.reply(
+        `No matching requests found for filter: ${filter}`,
+        kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+      );
+    }
+    return;
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE));
   const current = Math.min(Math.max(1, page), totalPages);
@@ -942,11 +995,14 @@ bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
     where, orderBy: { updatedAt: 'desc' }, skip: (current - 1) * PAGE, take: PAGE
   });
 
-  let msg = `My Issues (page ${current}/${totalPages}, filter: ${filter}):\n`;
+  let msg = `**My Issues** (page ${current}/${totalPages}, filter: ${filter}):\n\n`;
   for (const r of items) {
     const st = r.status.replace('_',' ').toUpperCase();
-    const snip = (r.description || '').slice(0, 40);
-    msg += `• #${r.id.toString()} — ${st} — ${snip}${r.description?.length > 40 ? '…' : ''}\n`;
+    // Clean description - remove command-like text
+    let cleanDesc = (r.description || '').replace(/^\/[a-zA-Z_]+/, '').trim();
+    if (!cleanDesc) cleanDesc = 'No description';
+    const snip = cleanDesc.slice(0, 40);
+    msg += `• **#${r.id.toString()}** — ${st} — ${snip}${cleanDesc.length > 40 ? '…' : ''}\n`;
   }
 
   const nav = [];
@@ -954,13 +1010,34 @@ bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
   if (current < totalPages) nav.push({ text: '➡️ Next', callback_data: `wo:my|${current + 1}|${filter}` });
 
   const filters = [
-    { text: 'All', callback_data: 'wo:my|1|all' },
-    { text: 'Open', callback_data: 'wo:my|1|Open' },
-    { text: 'In Progress', callback_data: 'wo:my|1|In Progress' },
-    { text: 'Closed', callback_data: 'wo:my|1|Closed' },
+    { text: filter === 'all' ? '🔵 All' : 'All', callback_data: 'wo:my|1|all' },
+    { text: filter === 'Open' ? '🔵 Open' : 'Open', callback_data: 'wo:my|1|Open' },
+    { text: filter === 'In Progress' ? '🔵 In Progress' : 'In Progress', callback_data: 'wo:my|1|In Progress' },
+    { text: filter === 'Closed' ? '🔵 Closed' : 'Closed', callback_data: 'wo:my|1|Closed' },
   ];
 
-  await ctx.reply(msg, kb([nav].filter(r=>r.length).concat([filters]).concat([[{ text:'⬅️ Back', callback_data:'back_main'}]])));
+  try {
+    await ctx.editMessageText(
+      msg,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { 
+          inline_keyboard: [nav].filter(r=>r.length).concat([filters]).concat([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+        }
+      }
+    );
+  } catch (e) {
+    // Fallback to reply if edit fails
+    await ctx.reply(
+      msg,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { 
+          inline_keyboard: [nav].filter(r=>r.length).concat([filters]).concat([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+        }
+      }
+    );
+  }
 });
 
 bot.action('wo:start_new', async (ctx) => {
@@ -975,12 +1052,32 @@ bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
   const page = parseInt(ctx.match[1], 10) || 1;
   const filter = ctx.match[2];
   const { user, member } = await requireMembership(ctx);
-  if (!['facility_admin','supervisor','technician'].includes(member.role)) return ctx.reply('Not authorized.');
+  if (!['facility_admin','supervisor','technician'].includes(member.role)) {
+    try {
+      await ctx.editMessageText('❌ **Not Authorized**\n\nYou do not have permission to manage requests.', kb([[{ text:'⬅️ Back', callback_data:'back_main'}]]));
+    } catch {
+      await ctx.reply('❌ **Not Authorized**\n\nYou do not have permission to manage requests.', kb([[{ text:'⬅️ Back', callback_data:'back_main'}]]));
+    }
+    return;
+  }
 
   const whereBase = { facilityId: user.activeFacilityId };
   const where = (filter === 'all') ? whereBase : { ...whereBase, status: filter.toLowerCase().replace(' ','_') };
   const total = await prisma.workOrder.count({ where });
-  if (!total) return ctx.reply('No requests.');
+  if (!total) {
+    try {
+      await ctx.editMessageText(
+        `No requests found for filter: ${filter}`,
+        kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+      );
+    } catch {
+      await ctx.reply(
+        `No requests found for filter: ${filter}`,
+        kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+      );
+    }
+    return;
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE));
   const current = Math.min(Math.max(1, page), totalPages);
@@ -988,11 +1085,16 @@ bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
     where, orderBy: { updatedAt: 'desc' }, skip: (current - 1) * PAGE, take: PAGE
   });
 
-  let msg = `Requests (page ${current}/${totalPages}, filter: ${filter}):\n`;
+  let msg = `**Manage Requests** (page ${current}/${totalPages}, filter: ${filter}):\n\n`;
   const rows = [];
   for (const r of items) {
     const st = r.status.replace('_', ' ');
-    msg += `• #${r.id.toString()} — ${st} — ${(r.description || '').slice(0,40)}\n`;
+    // Clean description - remove command-like text
+    let cleanDesc = (r.description || '').replace(/^\/[a-zA-Z_]+/, '').trim();
+    if (!cleanDesc) cleanDesc = 'No description';
+    const snip = cleanDesc.slice(0, 40);
+    msg += `• **#${r.id.toString()}** — ${st} — ${snip}${cleanDesc.length > 40 ? '…' : ''}\n`;
+    
     const row = [];
     if (r.status !== 'in_progress') row.push({ text: '🟠 In Progress', callback_data: `wo:status|${r.id}|In Progress` });
     if (r.status !== 'closed')      row.push({ text: '🟢 Close',       callback_data: `wo:status|${r.id}|Closed` });
@@ -1005,13 +1107,34 @@ bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
   if (current < totalPages) nav.push({ text: '➡️ Next', callback_data: `wo:manage|${current + 1}|${filter}` });
 
   const filters = [
-    { text: 'All', callback_data: 'wo:manage|1|all' },
-    { text: 'Open', callback_data: 'wo:manage|1|Open' },
-    { text: 'In Progress', callback_data: 'wo:manage|1|In Progress' },
-    { text: 'Closed', callback_data: 'wo:manage|1|Closed' }
+    { text: filter === 'all' ? '🔵 All' : 'All', callback_data: 'wo:manage|1|all' },
+    { text: filter === 'Open' ? '🔵 Open' : 'Open', callback_data: 'wo:manage|1|Open' },
+    { text: filter === 'In Progress' ? '🔵 In Progress' : 'In Progress', callback_data: 'wo:manage|1|In Progress' },
+    { text: filter === 'Closed' ? '🔵 Closed' : 'Closed', callback_data: 'wo:manage|1|Closed' }
   ];
 
-  await ctx.reply(msg, kb([nav].filter(r=>r.length).concat([filters]).concat(rows).concat([[{ text:'⬅️ Back', callback_data:'back_main'}]])));
+  try {
+    await ctx.editMessageText(
+      msg,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { 
+          inline_keyboard: [nav].filter(r=>r.length).concat([filters]).concat(rows).concat([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+        }
+      }
+    );
+  } catch (e) {
+    // Fallback to reply if edit fails
+    await ctx.reply(
+      msg,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: { 
+          inline_keyboard: [nav].filter(r=>r.length).concat([filters]).concat(rows).concat([[{ text:'⬅️ Back', callback_data:'back_main'}]])
+        }
+      }
+    );
+  }
 });
 
 bot.action(/^wo:status\|(\d+)\|(Open|In Progress|Closed)$/, async (ctx) => {
