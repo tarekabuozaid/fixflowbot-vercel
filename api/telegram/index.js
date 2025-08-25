@@ -146,9 +146,20 @@ async function sendOnboardingMenu(ctx) {
 // === Bot init ===
 const bot = new Telegraf(CONFIG.TOKEN, { handlerTimeout: CONFIG.HANDLER_TIMEOUT });
 
-bot.catch((err, ctx) => {
-  console.error('TELEGRAM_ERROR', { err: err.stack || err.message, from: ctx?.from?.id, type: ctx?.updateType });
-  try { if (ctx?.answerCbQuery) ctx.answerCbQuery('An error occurred. Try again.').catch(()=>{}); } catch {}
+bot.catch(async (err, ctx) => {
+  console.error('TELEGRAM_ERROR', { 
+    err: err.stack || err.message, 
+    from: ctx?.from?.id, 
+    type: ctx?.updateType,
+    data: ctx?.callbackQuery?.data
+  });
+  
+  // Always try to answer callback queries to prevent timeout
+  if (ctx?.updateType === 'callback_query') {
+    try {
+      await ctx.answerCbQuery('⚠️ An error occurred. Please try again.', { show_alert: false }).catch(()=>{});
+    } catch {}
+  }
 });
 
 // Register commands (EN only, one-time)
@@ -390,7 +401,7 @@ bot.action('stats', async (ctx) => {
           reply_markup: { inline_keyboard: buttons }
         }
       );
-    } catch (e) {
+  } catch (e) {
       // Fallback to reply if edit fails
       await ctx.reply(
         text,
@@ -986,8 +997,8 @@ bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
         kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])
       );
     }
-    return;
-  }
+        return;
+      }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE));
   const current = Math.min(Math.max(1, page), totalPages);
@@ -1058,8 +1069,8 @@ bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
     } catch {
       await ctx.reply('❌ **Not Authorized**\n\nYou do not have permission to manage requests.', kb([[{ text:'⬅️ Back', callback_data:'back_main'}]]));
     }
-    return;
-  }
+      return;
+    }
 
   const whereBase = { facilityId: user.activeFacilityId };
   const where = (filter === 'all') ? whereBase : { ...whereBase, status: filter.toLowerCase().replace(' ','_') };
@@ -1076,8 +1087,8 @@ bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
         kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])
       );
     }
-    return;
-  }
+      return;
+    }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE));
   const current = Math.min(Math.max(1, page), totalPages);
@@ -1170,6 +1181,10 @@ bot.action(/^wo:status\|(\d+)\|(Open|In Progress|Closed)$/, async (ctx) => {
 // === Master Panel (preserved) ===
 bot.command('master', async (ctx) => {
   if (!isMaster(ctx)) return ctx.reply('Only master can access this panel.');
+  
+  // Send immediate response to avoid timeout
+  const loadingMsg = await ctx.reply('🔄 Loading master panel...');
+  
   try {
     const [pendingFacilities, activeFacilities, totalFacilities, pendingJoinRequests] = await Promise.all([
       prisma.facility.count({ where: { isActive: false } }),
@@ -1191,9 +1206,13 @@ Choose:`;
       [{ text: '👥 Pending Join Requests', callback_data: 'mj_list' }],
       [{ text: '📋 List Facilities (active/default)', callback_data: 'mf_list_fac' }],
     ];
+    
+    // Delete loading message and send actual panel
+    try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
     await ctx.reply(text, kb(rows));
   } catch (e) {
     console.error('MASTER_ERR', e);
+    try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
     await ctx.reply('Failed to open master panel.');
   }
 });
@@ -1216,8 +1235,8 @@ bot.on('callback_query', async (ctx, next) => {
         { text: `✅ Business #${f.id.toString()}`, callback_data: `mf_appr_Business_${f.id.toString()}` },
       ]))
     ));
-    return;
-  }
+      return;
+    }
 
   if (data.startsWith('mf_appr_')) {
     await ctx.answerCbQuery().catch(()=>{});
@@ -1229,13 +1248,35 @@ bot.on('callback_query', async (ctx, next) => {
 
   if (data === 'mj_list') {
     await ctx.answerCbQuery().catch(()=>{});
-    const reqs = await prisma.facilitySwitchRequest.findMany({ where: { status: 'pending' }, take: 10, orderBy: { createdAt: 'asc' } });
-    if (!reqs.length) return ctx.answerCbQuery('No pending requests', { show_alert: true });
-    const lines = await Promise.all(reqs.map(async r => {
-      const u = await prisma.user.findUnique({ where: { id: r.userId } });
-      const f = r.toFacilityId ? await prisma.facility.findUnique({ where: { id: r.toFacilityId } }) : null;
-      return `• req#${r.id.toString()} — tg:${u?.tgId?.toString() ?? '?'} → ${f?.name ?? '?'}`;
-    }));
+    
+    // Use includes to fetch related data in one query
+    const reqs = await prisma.facilitySwitchRequest.findMany({ 
+      where: { status: 'pending' }, 
+      take: 10, 
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: true
+      }
+    });
+    
+    if (!reqs.length) {
+      await ctx.answerCbQuery('No pending requests', { show_alert: true });
+      return;
+    }
+    
+    // Fetch facility names separately to avoid N+1 queries
+    const facilityIds = [...new Set(reqs.map(r => r.toFacilityId))];
+    const facilities = await prisma.facility.findMany({
+      where: { id: { in: facilityIds } }
+    });
+    const facilityMap = new Map(facilities.map(f => [f.id.toString(), f.name]));
+    
+    const lines = reqs.map(r => {
+      const tgId = r.user?.tgId?.toString() ?? '?';
+      const facName = facilityMap.get(r.toFacilityId.toString()) ?? '?';
+      return `• req#${r.id.toString()} — tg:${tgId} → ${facName}`;
+    });
+    
     await ctx.editMessageText(`Pending Join Requests:\n${lines.join('\n')}\n\nChoose:`, kb(reqs.map(r => ([
       { text: `✅ Approve #${r.id.toString()}`, callback_data: `mj_appr_${r.id.toString()}` },
       { text: `⛔ Deny #${r.id.toString()}`,    callback_data: `mj_den_${r.id.toString()}` },
@@ -1410,44 +1451,21 @@ bot.action('wo:confirm', async (ctx) => {
   try {
     const { user } = await requireMembership(ctx);
 
-    // Try with extended columns if your schema has them
-    let wo;
-    try {
-      wo = await prisma.workOrder.create({
-        data: {
-          facilityId: user.activeFacilityId,
-          createdByUserId: user.id,
-          status: 'open',
-          type: s.data.type ?? null,             // optional column
-          department: s.data.department ?? null,
-          priority: s.data.priority ?? null,
-          location: s.data.location ?? null,     // optional column
-          assigneeUserId: s.data.assigneeUserId ?? null, // optional column
-          imageFileId: s.data.photoFileId ?? null,       // optional column
-          description: s.data.description ?? ''
-        }
-      });
-    } catch (e) {
-      // Fallback if optional columns are missing in Prisma schema
-      const meta = {
-        type: s.data.type,
-        department: s.data.department,
-        priority: s.data.priority,
-        location: s.data.location,
-        assigneeUserId: s.data.assigneeUserId,
-        imageFileId: s.data.photoFileId
-      };
-      wo = await prisma.workOrder.create({
-        data: {
-          facilityId: user.activeFacilityId,
-          createdByUserId: user.id,
-          status: 'open',
-          department: s.data.department ?? null,
-          priority: s.data.priority ?? null,
-          description: [s.data.description || '', `\n\n[meta] ${JSON.stringify(meta)}`].join('')
-        }
-      });
-    }
+    // Create work order with schema-compatible fields
+    const wo = await prisma.workOrder.create({
+      data: {
+        facilityId: user.activeFacilityId,
+        createdByUserId: user.id,
+        status: 'open',
+        typeOfWork: s.data.type ?? null,
+        department: s.data.department ?? null,
+        priority: s.data.priority ?? null,
+        location: s.data.location ?? null,
+        assignee: s.data.assigneeUserId ? s.data.assigneeUserId.toString() : null,
+        imageUrl: s.data.photoFileId ? `telegram:${s.data.photoFileId}` : null,
+        description: s.data.description ?? ''
+      }
+    });
 
     // Timeline (if StatusHistory exists)
     try {
