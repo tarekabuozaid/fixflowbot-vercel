@@ -1,12 +1,12 @@
-// scripts/import-xlsx.ts
-// Usage: npx ts-node scripts/import-xlsx.ts ./data/FixFlowDB.xlsx
-import * as XLSX from 'xlsx';
-import { PrismaClient, WorkOrderStatus } from '@prisma/client';
+// scripts/import-xlsx.js
+// Usage: node scripts/import-xlsx.js ./data/FixFlowDB.xlsx
+const XLSX = require('xlsx');
+const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
 
 // === Helpers: mapping & dates ===
-const statusMap: Record<string, WorkOrderStatus> = {
+const statusMap = {
   'open': 'open',
   'in progress': 'in_progress',
   'in_progress': 'in_progress',
@@ -14,8 +14,8 @@ const statusMap: Record<string, WorkOrderStatus> = {
   'closed': 'closed'
 };
 
-const norm = (v: any) => (v ?? '').toString().trim();
-const toDate = (v: any) => {
+const norm = (v) => (v ?? '').toString().trim();
+const toDate = (v) => {
   if (!v) return null;
   const d = new Date(v);
   return isNaN(+d) ? null : d;
@@ -29,26 +29,26 @@ async function ensureDefaultUser() {
   return u;
 }
 
-async function upsertFacilityByName(name: string, extra?: Partial<import('@prisma/client').Facility>) {
+async function upsertFacilityByName(name, extra = {}) {
   return prisma.facility.upsert({
     where: { name },
-    update: { ...(extra || {}) },
-    create: { name, isDefault: false, isActive: true, planTier: 'Free', ...(extra || {}) }
+    update: { ...extra },
+    create: { name, isDefault: false, isActive: true, planTier: 'Free', ...extra }
   });
 }
 
-async function upsertUserByTgId(tgId: bigint, patch?: Partial<import('@prisma/client').User>) {
+async function upsertUserByTgId(tgId, patch = {}) {
   return prisma.user.upsert({
     where: { tgId },
-    update: { ...(patch || {}) },
-    create: { tgId, status: 'active', ...(patch || {}) }
+    update: { ...patch },
+    create: { tgId, status: 'active', ...patch }
   });
 }
 
 // === Importers per sheet ===
-async function importFacilities(ws: XLSX.WorkSheet) {
+async function importFacilities(ws) {
   console.log('📊 Importing Facilities...');
-  const rows = XLSX.utils.sheet_to_json<any>(ws, { defval: null });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
   let count = 0;
   
   for (const r of rows) {
@@ -66,9 +66,9 @@ async function importFacilities(ws: XLSX.WorkSheet) {
   console.log(`✅ Imported ${count} facilities`);
 }
 
-async function importRegistrations(ws: XLSX.WorkSheet) {
+async function importRegistrations(ws) {
   console.log('👥 Importing Registrations...');
-  const rows = XLSX.utils.sheet_to_json<any>(ws, { defval: null });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
   let count = 0;
   
   for (const r of rows) {
@@ -101,9 +101,9 @@ async function importRegistrations(ws: XLSX.WorkSheet) {
   console.log(`✅ Imported ${count} registrations`);
 }
 
-async function importWorkOrders(ws: XLSX.WorkSheet) {
+async function importWorkOrders(ws) {
   console.log('🔧 Importing Work Orders...');
-  const rows = XLSX.utils.sheet_to_json<any>(ws, { defval: null });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
   const fallback = await ensureDefaultUser();
   let count = 0;
 
@@ -128,10 +128,10 @@ async function importWorkOrders(ws: XLSX.WorkSheet) {
         createdByUserId: createdBy.id,
         status,
         priority,
-        location: r.Location ?? null,
-        department: r.Department ?? null,
-        description: r.Description ?? r.Comments ?? 'Imported from Excel',
-        notes: r.Notes ?? null,
+        location: norm(r.Location),
+        department: norm(r.Department),
+        description: norm(r.Description || r.Comments || 'Imported from Excel'),
+        notes: norm(r.Notes),
         createdAt: toDate(r['Created Date']) ?? undefined,
         updatedAt: toDate(r['Updated Date']) ?? undefined
       }
@@ -151,9 +151,9 @@ async function importWorkOrders(ws: XLSX.WorkSheet) {
   console.log(`✅ Imported ${count} work orders`);
 }
 
-async function importTimelines(ws: XLSX.WorkSheet) {
+async function importTimelines(ws) {
   console.log('📅 Importing Timelines...');
-  const rows = XLSX.utils.sheet_to_json<any>(ws, { defval: null });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
   let count = 0;
   
   for (const t of rows) {
@@ -198,7 +198,7 @@ async function importTimelines(ws: XLSX.WorkSheet) {
   try {
     const file = process.argv[2];
     if (!file) {
-      console.error('Usage: ts-node scripts/import-xlsx.ts <path/to/file.xlsx>');
+      console.error('Usage: node scripts/import-xlsx.js <path/to/file.xlsx>');
       process.exit(1);
     }
     

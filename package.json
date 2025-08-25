@@ -14,7 +14,7 @@
     "vercel-build": "prisma generate",
     "seed": "node scripts/seed.js",
     "test": "node scripts/test-bot.js",
-    "import": "ts-node scripts/import-xlsx.ts",
+    "import": "node scripts/import-xlsx.js",
     "verify": "node scripts/verify-import.js"
   },
   "dependencies": {
