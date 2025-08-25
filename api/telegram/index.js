@@ -314,6 +314,55 @@ bot.on('text', async (ctx, next) => {
       }
     }
 
+    // Enhanced WO flow (new_wo2)
+    if (s.flow === 'new_wo2') {
+      const text = (ctx.message.text || '').trim().slice(0, 500);
+
+      if (s.step === 'department') {
+        s.data.department = text.toLowerCase();
+        if (!DEPARTMENTS.includes(s.data.department)) {
+          return ctx.reply(`Department must be one of: ${DEPARTMENTS.join(', ')}`);
+        }
+        // go PRIORITY
+        s.step = 'priority'; flows.set(ctx.from.id, s);
+        const prRows = [ rowButtons(PRIORITIES, 'wo:prio|') ];
+        prRows.push([{ text: '⬅️ Back', callback_data: 'back_main' }]);
+        return ctx.reply('Select priority:', kb(prRows));
+      }
+
+      if (s.step === 'location') {
+        s.data.location = text.slice(0, 120);
+        // go optional ASSIGN (or skip)
+        s.step = 'assign'; flows.set(ctx.from.id, s);
+
+        // List technicians in current facility (up to 20)
+        const { user } = await requireMembership(ctx);
+        const techs = await prisma.facilityMember.findMany({
+          where: { facilityId: user.activeFacilityId, role: 'technician' },
+          include: { user: true },
+          take: 20
+        });
+
+        const rows = [];
+        if (techs.length) {
+          rows.push(...techs.map(t => ([
+            { text: `👤 ${t.user?.firstName || t.user?.id.toString()}`, callback_data: `wo:assign|${t.userId}` }
+          ])));
+        }
+        rows.push([{ text: 'Skip (no assignee)', callback_data: 'wo:assign|skip' }]);
+        rows.push([{ text: '⬅️ Back', callback_data: 'back_main' }]);
+
+        return ctx.reply('Assign to technician? (optional):', kb(rows));
+      }
+
+      if (s.step === 'desc') {
+        s.data.description = text.slice(0, 500);
+        // Ask for image (optional)
+        s.step = 'image'; flows.set(ctx.from.id, s);
+        return ctx.reply('Attach an image (send a photo now) or tap "Skip".', kb([[{ text:'Skip', callback_data:'wo:image|skip' }],[{ text:'⬅️ Back', callback_data:'back_main'}]]));
+      }
+    }
+
     return next();
   } catch (e) {
     console.error('FLOW_ERROR', e);
@@ -516,6 +565,16 @@ bot.action(/^wo:status\|(\d+)\|(Open|In Progress|Closed)$/, async (ctx) => {
     await tx.statusHistory.create({ data: { workOrderId: id, oldStatus: old, newStatus, updatedByUserId: user.id } });
   });
 
+  // Notify creator and assignee about status change
+  try {
+    const creator = await prisma.user.findUnique({ where: { id: wo.createdByUserId } });
+    await notifyUser(creator?.tgId, `ℹ️ WO #${id.toString()} updated: ${old} → ${newStatus}`);
+    if (wo.assigneeUserId) {
+      const assignee = await prisma.user.findUnique({ where: { id: wo.assigneeUserId } });
+      await notifyUser(assignee?.tgId, `ℹ️ WO #${id.toString()} updated: ${old} → ${newStatus}`);
+    }
+  } catch {}
+
   return ctx.reply(`✅ WO #${id.toString()} updated: ${old} → ${newStatus}`);
 });
 
@@ -638,12 +697,215 @@ bot.on('callback_query', async (ctx, next) => {
   }
 });
 
-// === New Issue entry point ===
+// ======== WO ENHANCED FLOW (Type → Dept → Priority → Location → Assign → Image → Summary → Confirm) ========
+
+// Config for lists
+const WO_TYPES = ['breakdown', 'preventive', 'inspection', 'request'];
+const DEPARTMENTS = ['civil', 'electrical', 'mechanical', 'general'];
+const PRIORITIES = ['low', 'medium', 'high'];
+
+// Small helpers
+function rowButtons(labels, prefix) {
+  return labels.map(l => ({ text: `• ${String(l).charAt(0).toUpperCase()+String(l).slice(1)}`, callback_data: `${prefix}${l}` }));
+}
+async function notifyUser(tgId, text) {
+  if (!tgId) return;
+  try { await bot.telegram.sendMessage(tgId.toString(), text); } catch {}
+}
+
+// Summary & Confirm
+async function showWoSummary(ctx, s) {
+  s.step = 'confirm'; flows.set(ctx.from.id, s);
+  const lines = [
+    'Please confirm your request:',
+    `• Type: ${s.data.type}`,
+    `• Department: ${s.data.department}`,
+    `• Priority: ${s.data.priority}`,
+    `• Location: ${s.data.location || '—'}`,
+    `• Assign: ${s.data.assigneeUserId ? `user#${s.data.assigneeUserId.toString()}` : '—'}`,
+    `• Description: ${s.data.description?.slice(0,120) || '—'}`,
+    `• Image: ${s.data.photoFileId ? 'attached' : '—'}`
+  ];
+  const rows = [
+    [{ text: '✅ Confirm', callback_data: 'wo:confirm' }],
+    [{ text: '✏️ Edit Description', callback_data: 'wo:edit|desc' }],
+    [{ text: '⬅️ Back to Menu', callback_data: 'back_main' }],
+  ];
+  await ctx.reply(lines.join('\n'), kb(rows));
+}
+
+// Replace the original start handler with a richer one
 bot.action('wo:start_new', async (ctx) => {
   await ctx.answerCbQuery().catch(()=>{});
-  await requireMembership(ctx);
-  flows.set(ctx.from.id, { flow: 'new_wo', step: 1, data: {}, ts: Date.now() });
-  return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
+  await requireMembership(ctx); // gate
+  // init scene
+  flows.set(ctx.from.id, { 
+    flow: 'new_wo2', 
+    step: 'type', 
+    data: { type:null, department:null, priority:null, location:null, assigneeUserId:null, photoFileId:null, description:null },
+    ts: Date.now()
+  });
+  // TYPE menu
+  const typeRows = [ rowButtons(WO_TYPES, 'wo:type|') ];
+  typeRows.push([{ text: '⬅️ Back', callback_data: 'back_main' }]);
+  try { await ctx.editMessageText('Select issue type:', kb([ typeRows[0], typeRows[1] ])); }
+  catch { await ctx.reply('Select issue type:', kb([ typeRows[0], typeRows[1] ])); }
+});
+
+// TYPE → store & ask Department (free text but suggested list)
+bot.action(/^wo:type\|(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2') return;
+  const v = ctx.match[1].toLowerCase();
+  if (!WO_TYPES.includes(v)) return ctx.answerCbQuery('Invalid type', { show_alert:true });
+  s.data.type = v; s.step = 'department'; flows.set(ctx.from.id, s);
+  const hint = `Department? (e.g. ${DEPARTMENTS.join('/')})`;
+  try { await ctx.editMessageText(`Type: ${v}\n\n${hint}`, kb([[{ text:'Cancel', callback_data:'back_main'}]])); }
+  catch { await ctx.reply(hint, kb([[{ text:'Cancel', callback_data:'back_main'}]])); }
+});
+
+// PRIORITY via buttons
+bot.action(/^wo:prio\|(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2' || s.step !== 'priority') return;
+  const p = ctx.match[1].toLowerCase();
+  if (!PRIORITIES.includes(p)) return ctx.answerCbQuery('Invalid priority', { show_alert:true });
+  s.data.priority = p; s.step = 'location'; flows.set(ctx.from.id, s);
+  try { await ctx.editMessageText(`Priority: ${p}\n\nLocation? (e.g. Building A, Floor 2, Room 205)`, kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])); }
+  catch { await ctx.reply('Location? (e.g. Building A, Floor 2, Room 205)', kb([[{ text:'⬅️ Back', callback_data:'back_main'}]])); }
+});
+
+// ASSIGN selection
+bot.action(/^wo:assign\|(skip|\d+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2' || s.step !== 'assign') return;
+
+  const val = ctx.match[1];
+  if (val !== 'skip') {
+    const uid = BigInt(val);
+    const u = await prisma.user.findUnique({ where: { id: uid } });
+    if (!u) return ctx.answerCbQuery('Technician not found', { show_alert:true });
+    s.data.assigneeUserId = uid;
+  }
+  // Next → Description
+  s.step = 'desc'; flows.set(ctx.from.id, s);
+  return ctx.reply('Describe the issue (what happened?):', kb([[{ text:'⬅️ Back', callback_data:'back_main'}]]));
+});
+
+// skip image
+bot.action('wo:image|skip', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2') return;
+  await showWoSummary(ctx, s);
+});
+
+// Edit description quick path
+bot.action('wo:edit|desc', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2') return;
+  s.step = 'desc'; flows.set(ctx.from.id, s);
+  return ctx.reply('Send the new description:', kb([[{ text:'⬅️ Back', callback_data:'back_main'}]]));
+});
+
+// Confirm → Create in DB (with safe fallback if columns don't exist)
+bot.action('wo:confirm', async (ctx) => {
+  await ctx.answerCbQuery().catch(()=>{});
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2' || s.step !== 'confirm') return;
+
+  try {
+    const { user } = await requireMembership(ctx);
+
+    // Try with extended columns if your schema has them
+    let wo;
+    try {
+      wo = await prisma.workOrder.create({
+        data: {
+          facilityId: user.activeFacilityId,
+          createdByUserId: user.id,
+          status: 'open',
+          type: s.data.type ?? null,             // optional column
+          department: s.data.department ?? null,
+          priority: s.data.priority ?? null,
+          location: s.data.location ?? null,     // optional column
+          assigneeUserId: s.data.assigneeUserId ?? null, // optional column
+          imageFileId: s.data.photoFileId ?? null,       // optional column
+          description: s.data.description ?? ''
+        }
+      });
+    } catch (e) {
+      // Fallback if optional columns are missing in Prisma schema
+      const meta = {
+        type: s.data.type,
+        department: s.data.department,
+        priority: s.data.priority,
+        location: s.data.location,
+        assigneeUserId: s.data.assigneeUserId,
+        imageFileId: s.data.photoFileId
+      };
+      wo = await prisma.workOrder.create({
+        data: {
+          facilityId: user.activeFacilityId,
+          createdByUserId: user.id,
+          status: 'open',
+          department: s.data.department ?? null,
+          priority: s.data.priority ?? null,
+          description: [s.data.description || '', `\n\n[meta] ${JSON.stringify(meta)}`].join('')
+        }
+      });
+    }
+
+    // Timeline (if StatusHistory exists)
+    try {
+      await prisma.statusHistory.create({
+        data: {
+          workOrderId: wo.id,
+          oldStatus: 'new',
+          newStatus: 'open',
+          updatedByUserId: user.id
+        }
+      });
+    } catch {}
+
+    // Notify assignee (if any)
+    if (s.data.assigneeUserId) {
+      const assignee = await prisma.user.findUnique({ where: { id: s.data.assigneeUserId } });
+      await notifyUser(assignee?.tgId, `🆕 New WO assigned: #${wo.id.toString()}`);
+    }
+
+    flows.delete(ctx.from.id);
+
+    await ctx.reply(`✅ Request created: #${wo.id.toString()}`, kb([[{ text:'⬅️ Back to Menu', callback_data:'back_main'}]]));
+  } catch (e) {
+    console.error('NEW_WO2_CONFIRM_ERR', e);
+    flows.delete(ctx.from.id);
+    await ctx.reply('Failed to create work order. Please try again later.');
+  }
+});
+
+// ======== END WO ENHANCED FLOW ========
+
+// IMAGE capture (Telegram photo)
+bot.on('photo', async (ctx, next) => {
+  const s = flows.get(ctx.from.id);
+  if (!s || s.flow !== 'new_wo2' || s.step !== 'image') return next();
+  try {
+    const sizes = ctx.message.photo || [];
+    if (!sizes.length) return next();
+    const best = sizes[sizes.length - 1];
+    s.data.photoFileId = best.file_id;
+    flows.set(ctx.from.id, s);
+    // move to SUMMARY
+    await showWoSummary(ctx, s);
+  } catch (e) {
+    console.error('NEW_WO2_PHOTO_ERR', e);
+    return ctx.reply('Failed to receive photo. You can tap Skip.');
+  }
 });
 
 // === Webhook bootstrap (idempotent) ===
