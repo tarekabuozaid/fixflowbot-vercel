@@ -58,6 +58,13 @@ if (!token || !publicUrl) {
     }
     return user;
   }
+  async function requireMembership(ctx) {
+    const user = await ensureUser(ctx);
+    if (!user.activeFacilityId) throw new Error('no_active_facility');
+    const member = await prisma.facilityMember.findFirst({ where: { userId: user.id, facilityId: user.activeFacilityId } });
+    return { user, member };
+  }
+  function assertRole(member, ...allowed) { if (!member || !allowed.includes(member.role)) throw new Error('forbidden'); }
 
   // Simple test
   bot.command('ping', (ctx) => ctx.reply('pong ✅'));
@@ -104,21 +111,26 @@ if (!token || !publicUrl) {
   });
 
   // === Smart Onboarding (NEW) ===
-  // Auto display registration/join for non-setup users
-  bot.start(async (ctx) => {
-    const user = await ensureUser(ctx);
-    const needOnboarding = user.status === 'pending' || !user.activeFacilityId;
-    if (needOnboarding) {
-      return ctx.replyWithMarkdown(
-        `👋 *Welcome!* Choose an action to start:`,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('🆕 Register New Facility', 'start_reg_fac')],
-          [Markup.button.callback('👥 Join Facility', 'start_join')]
-        ])
-      );
+  // Main menu (inline keyboard)
+  async function showMainMenu(ctx) {
+    const me = await ensureUser(ctx);
+    const inline = [];
+    if (me.status !== 'active' || !me.activeFacilityId) {
+      inline.push([{ text: '🆕 Register Facility', callback_data: 'start_reg_fac' }]);
+      inline.push([{ text: '👥 Join Facility', callback_data: 'start_join' }]);
+    } else {
+      inline.push([{ text: '➕ New Issue', callback_data: 'wo:start_new' }, { text: '📋 My Issues', callback_data: 'wo:my|1|all' }]);
+      // Admin/Tech rows
+      const member = await prisma.facilityMember.findFirst({ where: { userId: me.id, facilityId: me.activeFacilityId } });
+      const canManage = member && ['facility_admin', 'supervisor', 'technician'].includes(member.role);
+      if (canManage) inline.push([{ text: '🔧 Manage Requests', callback_data: 'wo:manage|1|all' }]);
+      inline.push([{ text: '❓ Help', callback_data: 'help' }]);
     }
-    return ctx.reply('✅ You are ready. Use /me or /newwo');
-  });
+    await ctx.reply('Choose an action:', { reply_markup: { inline_keyboard: inline } });
+  }
+
+  bot.command('start', async (ctx) => showMainMenu(ctx));
+  bot.action('help', async (ctx) => { await ctx.answerCbQuery().catch(() => { }); await ctx.reply('FixFlowBot helps you create and track maintenance requests.'); });
 
   // ⚠️ Replace old message handler with this middleware:
   bot.use(async (ctx, next) => {
@@ -350,6 +362,148 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
       endFlow(ctx); // ← Important: exit the flow on error
       await ctx.answerCbQuery('Error creating request', { show_alert: true });
     }
+  });
+
+  // === My Issues (pagination + filter) ===
+  const PAGE_SIZE = 5;
+
+  bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const page = parseInt(ctx.match[1], 10) || 1;
+    const filter = ctx.match[2];
+    const { user } = await requireMembership(ctx);
+
+    const whereBase = { facilityId: user.activeFacilityId, createdByUserId: user.id };
+    const where = (filter === 'all') ? whereBase : { ...whereBase, status: filter.toLowerCase().replace(' ', '_') };
+
+    const total = await prisma.workOrder.count({ where });
+    if (!total) { return ctx.reply('No matching requests.'); }
+
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const current = Math.min(Math.max(1, page), totalPages);
+
+    const items = await prisma.workOrder.findMany({
+      where, orderBy: { updatedAt: 'desc' }, skip: (current - 1) * PAGE_SIZE, take: PAGE_SIZE
+    });
+
+    let msg = `My Issues (page ${current}/${totalPages}, filter: ${filter}):\n`;
+    for (const r of items) {
+      const st = r.status.toUpperCase();
+      const snip = (r.description || '').slice(0, 40);
+      msg += `• #${r.id.toString()} — ${st} — ${snip}${r.description?.length > 40 ? '…' : ''}\n`;
+    }
+
+    const nav = [];
+    if (current > 1) nav.push({ text: '⬅️ Prev', callback_data: `wo:my|${current - 1}|${filter}` });
+    if (current < totalPages) nav.push({ text: '➡️ Next', callback_data: `wo:my|${current + 1}|${filter}` });
+
+    const filters = [
+      { text: 'All', callback_data: 'wo:my|1|all' },
+      { text: 'Open', callback_data: 'wo:my|1|Open' },
+      { text: 'In Progress', callback_data: 'wo:my|1|In Progress' },
+      { text: 'Closed', callback_data: 'wo:my|1|Closed' },
+    ];
+
+    await ctx.reply(msg, { reply_markup: { inline_keyboard: [nav].filter(r => r.length).concat([filters]).concat([[{ text: '⬅️ Back', callback_data: 'back_main' }]]) } });
+  });
+
+  bot.action('back_main', async (ctx) => { await ctx.answerCbQuery().catch(() => { }); return showMainMenu(ctx); });
+
+  // === Minimal new issue conversation (3 steps) ===
+  const _scenes = {}; // light-weight memory
+
+  bot.action('wo:start_new', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    await requireMembership(ctx);
+    _scenes[ctx.from.id] = { step: 1, data: {} };
+    return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
+  });
+
+  bot.on('text', async (ctx) => {
+    const S = _scenes[ctx.from.id];
+    if (!S) return;
+    if (S.step === 1) { S.data.department = ctx.message.text.trim(); S.step = 2; return ctx.reply('Priority? (low/medium/high)'); }
+    if (S.step === 2) { S.data.priority = ctx.message.text.trim(); S.step = 3; return ctx.reply('Describe the issue:'); }
+    if (S.step === 3) {
+      const { user } = await requireMembership(ctx);
+      const wo = await prisma.workOrder.create({
+        data: {
+          facilityId: user.activeFacilityId, createdByUserId: user.id,
+          status: 'open', department: S.data.department.toLowerCase(),
+          priority: S.data.priority.toLowerCase(), description: ctx.message.text.trim()
+        }
+      });
+      delete _scenes[ctx.from.id];
+      return ctx.reply(`✅ Request created: #${wo.id.toString()}`);
+    }
+  });
+
+  // === Manage requests (admin/tech) + status updates + timeline ===
+  bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const page = parseInt(ctx.match[1], 10) || 1;
+    const filter = ctx.match[2];
+    const { user, member } = await requireMembership(ctx);
+    // صلاحيات
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) return ctx.reply('Not authorized.');
+
+    const whereBase = { facilityId: user.activeFacilityId };
+    const where = (filter === 'all') ? whereBase : { ...whereBase, status: filter.toLowerCase().replace(' ', '_') };
+
+    const total = await prisma.workOrder.count({ where });
+    if (!total) return ctx.reply('No requests.');
+
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const current = Math.min(Math.max(1, page), totalPages);
+    const items = await prisma.workOrder.findMany({
+      where, orderBy: { updatedAt: 'desc' }, skip: (current - 1) * PAGE_SIZE, take: PAGE_SIZE
+    });
+
+    let msg = `Requests (page ${current}/${totalPages}, filter: ${filter}):\n`;
+    const rows = [];
+    for (const r of items) {
+      const st = r.status.replace('_', ' ');
+      msg += `• #${r.id.toString()} — ${st} — ${(r.description || '').slice(0, 40)}\n`;
+      const row = [];
+      if (r.status !== 'in_progress') row.push({ text: '🟠 In Progress', callback_data: `wo:status|${r.id}|In Progress` });
+      if (r.status !== 'closed') row.push({ text: '🟢 Close', callback_data: `wo:status|${r.id}|Closed` });
+      if (r.status !== 'open') row.push({ text: '🔴 Reopen', callback_data: `wo:status|${r.id}|Open` });
+      rows.push(row);
+    }
+
+    const nav = [];
+    if (current > 1) nav.push({ text: '⬅️ Prev', callback_data: `wo:manage|${current - 1}|${filter}` });
+    if (current < totalPages) nav.push({ text: '➡️ Next', callback_data: `wo:manage|${current + 1}|${filter}` });
+
+    const filters = [
+      { text: 'All', callback_data: 'wo:manage|1|all' },
+      { text: 'Open', callback_data: 'wo:manage|1|Open' },
+      { text: 'In Progress', callback_data: 'wo:manage|1|In Progress' },
+      { text: 'Closed', callback_data: 'wo:manage|1|Closed' }
+    ];
+
+    await ctx.reply(msg, { reply_markup: { inline_keyboard: [nav].filter(r => r.length).concat([filters]).concat(rows).concat([[{ text: '⬅️ Back', callback_data: 'back_main' }]]) } });
+  });
+
+  // تحديث حالة + Timeline
+  bot.action(/^wo:status\|(\d+)\|(Open|In Progress|Closed)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const id = BigInt(ctx.match[1]);
+    const newLabel = ctx.match[2]; // human label
+    const newStatus = newLabel.toLowerCase().replace(' ', '_'); // prisma enum توقع
+    const { user, member } = await requireMembership(ctx);
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) return ctx.reply('Not authorized.');
+
+    const wo = await prisma.workOrder.findUnique({ where: { id } });
+    if (!wo || wo.facilityId !== user.activeFacilityId) return ctx.reply('Not found.');
+
+    const old = wo.status;
+    await prisma.$transaction(async (tx) => {
+      await tx.workOrder.update({ where: { id }, data: { status: newStatus } });
+      await tx.statusHistory.create({ data: { workOrderId: id, oldStatus: old, newStatus: newStatus, updatedByUserId: user.id } });
+    });
+
+    return ctx.reply(`✅ WO #${id.toString()} updated: ${old} → ${newStatus}`);
   });
 
   // === Master Panel (/master) (NEW) ===
