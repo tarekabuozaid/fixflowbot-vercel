@@ -44,6 +44,34 @@ if (!token || !publicUrl) {
     console.error('TELEGRAM_ERROR', { err: err.message, from: ctx?.from?.id });
   });
 
+  // === 0) Fast ACK + Global logs for callback queries ===
+  bot.on('callback_query', async (ctx, next) => {
+    try {
+      // ACK فوري (يسكت الـ spinner حتى لو حصلت أخطاء لاحقًا)
+      await ctx.answerCbQuery().catch(() => {});
+    } catch (_) {}
+
+    try {
+      // لوج مفيد للتشخيص
+      const u = ctx.from?.id;
+      const data = ctx.callbackQuery?.data;
+      const type = ctx.updateType;
+      console.log('CBQ_IN', { u, type, data });
+    } catch (_) {}
+
+    // مرّر للـ handlers المتخصصة
+    return next();
+  });
+
+  // Helper: edit-or-reply (لو فشلت editMessageText نعمل reply)
+  async function safeEditOrReply(ctx, text, extra) {
+    try {
+      await ctx.editMessageText(text, extra);
+    } catch {
+      await ctx.reply(text, extra);
+    }
+  }
+
   // === helpers & state (NEW) ===
   const state = new Map(); // per-user short flows
   function kb(rows) { return { reply_markup: { inline_keyboard: rows } }; }
@@ -130,7 +158,7 @@ if (!token || !publicUrl) {
   }
 
   bot.command('start', async (ctx) => showMainMenu(ctx));
-  bot.action('help', async (ctx) => { await ctx.answerCbQuery().catch(() => { }); await ctx.reply('FixFlowBot helps you create and track maintenance requests.'); });
+  bot.action('help', async (ctx) => { await ctx.reply('FixFlowBot helps you create and track maintenance requests.'); });
 
   // ⚠️ Replace old message handler with this middleware:
   bot.use(async (ctx, next) => {
@@ -161,26 +189,48 @@ if (!token || !publicUrl) {
     }
   });
 
-  // === Flows: Register Facility + Join (reuse existing handlers if present) ===
-  // Start facility registration flow from button
-  // Depends on text handler below (reg_fac steps)
-  // Assumes facility and membership creation code as we added before.
-  // If not present, we'll complete below with flow text.
-  bot.on('callback_query', async (ctx, next) => {
-    const data = ctx.callbackQuery?.data || '';
-    if (data === 'start_reg_fac') {
-      try {
-        await ctx.answerCbQuery().catch(() => {});
-        beginFlow(ctx); // ← Important: mark that we're entering a flow
-        state.set(ctx.from.id, { flow: 'reg_fac', step: 1, data: {} });
-        await ctx.editMessageText('🏢 Enter *facility name*:', { parse_mode: 'Markdown' });
-        return;
-      } catch (e) {
-        endFlow(ctx);
-        return ctx.reply('Failed to start registration flow. Please try again.');
-      }
+  // === Flows: Register Facility + Join (explicit handlers) ===
+  // Start: Register Facility flow (explicit action)
+  bot.action('start_reg_fac', async (ctx) => {
+    try {
+      beginFlow(ctx);
+      state.set(ctx.from.id, { flow: 'reg_fac', step: 1, data: {} });
+      await safeEditOrReply(ctx, '🏢 Enter *facility name*:', { parse_mode: 'Markdown' });
+    } catch (e) {
+      console.error('START_REG_FAC_ERR', e);
+      endFlow(ctx);
+      await ctx.reply('Failed to start registration flow. Please try again.');
     }
-    return next();
+  });
+
+  // Start: Join Facility picker (explicit action)
+  bot.action('start_join', async (ctx) => {
+    try {
+      beginFlow(ctx);
+
+      // إظهار المنشآت المتاحة: isActive=true أو isDefault=true كما اتفقنا
+      const facilities = await prisma.facility.findMany({
+        where: { OR: [{ isActive: true }, { isDefault: true }] },
+        orderBy: { createdAt: 'desc' },
+        take: 50
+      });
+
+      if (!facilities.length) {
+        endFlow(ctx);
+        await ctx.answerCbQuery('No facilities available to join', { show_alert: true }).catch(()=>{});
+        return ctx.reply('No facilities are available to join yet. Ask the master to activate or mark one as default.');
+      }
+
+      const rows = facilities.map(f => ([
+        { text: `🏢 ${f.name}${f.isDefault ? ' • default' : ''}${!f.isActive ? ' (inactive)' : ''}`, callback_data: `join_fac_${f.id.toString()}` }
+      ]));
+
+      await safeEditOrReply(ctx, 'Choose facility to join:', { reply_markup: { inline_keyboard: rows } });
+    } catch (e) {
+      console.error('START_JOIN_ERR', e);
+      endFlow(ctx);
+      await ctx.reply('Failed to start join flow. Please try again.');
+    }
   });
 
   // Text flow for facility registration (3 steps)
@@ -295,49 +345,44 @@ if (!token || !publicUrl) {
     return next();
   });
 
-  // Choose facility → choose role
-  bot.on('callback_query', async (ctx, next) => {
-    const data = ctx.callbackQuery?.data || '';
-    if (!data.startsWith('join_fac_')) return next();
-    
+    // Pick facility → move to role selection
+  bot.action(/^join_fac_(\d+)$/, async (ctx) => {
     try {
-      await ctx.answerCbQuery().catch(() => {});
-      const facilityId = BigInt(data.replace('join_fac_', ''));
-      const f = await prisma.facility.findUnique({ where: { id: facilityId } });
-      if (!f || !f.isActive) return ctx.answerCbQuery('Facility not available now', { show_alert: true });
-      state.set(ctx.from.id, { flow: 'join', step: 2, facilityId });
-      const rows = [
-        [
-          { text: '👤 User',        callback_data: 'role_user' },
-          { text: '🛠️ Technician', callback_data: 'role_technician' },
-          { text: '🧭 Supervisor',  callback_data: 'role_supervisor' },
-        ]
-      ];
-      await ctx.editMessageText(`Choose your role to join: ${f.name}`, kb(rows));
+      const fid = BigInt(ctx.match[1]);
+      const f = await prisma.facility.findUnique({ where: { id: fid } });
+      if (!f || !f.isActive) {
+        return ctx.answerCbQuery('Facility not available now', { show_alert: true });
+      }
+
+      state.set(ctx.from.id, { flow: 'join', step: 2, facilityId: fid });
+
+      const rows = [[
+        { text: '👤 User',        callback_data: 'role_user' },
+        { text: '🛠️ Technician', callback_data: 'role_technician' },
+        { text: '🧭 Supervisor',  callback_data: 'role_supervisor' },
+      ]];
+
+      await safeEditOrReply(ctx, `Choose your role to join: ${f.name}`, { reply_markup: { inline_keyboard: rows } });
     } catch (e) {
-      console.error('JOIN_FAC_ERROR', e);
+      console.error('JOIN_FAC_SELECT_ERR', e);
       await ctx.answerCbQuery('Error selecting facility', { show_alert: true });
     }
   });
 
-  // Create join request as pending + notify master
-  bot.on('callback_query', async (ctx, next) => {
-    const data = ctx.callbackQuery?.data || '';
-    if (!data.startsWith('role_')) return next();
-    
-          await ctx.answerCbQuery().catch(() => {});
-      const role = data.replace('role_', ''); // user | technician | supervisor
-      const s = state.get(ctx.from.id);
-      if (!s || s.flow !== 'join' || s.step !== 2) {
-        return ctx.answerCbQuery('Session expired, send /start again', { show_alert: true });
-      }
-      try {
-        const tgId = BigInt(ctx.from.id);
+  // Pick role → create pending request
+  bot.action(/^role_(user|technician|supervisor)$/, async (ctx) => {
+    const role = ctx.match[1]; // user | technician | supervisor
+    const s = state.get(ctx.from.id);
+    if (!s || s.flow !== 'join' || s.step !== 2) {
+      return ctx.answerCbQuery('Session expired, send /start again', { show_alert: true });
+    }
+    try {
+      const tgId = BigInt(ctx.from.id);
       let user = await prisma.user.findUnique({ where: { tgId } });
       if (!user) {
         user = await prisma.user.create({
           data: { tgId, firstName: ctx.from.first_name ?? null, status: 'pending' }
-          });
+        });
       }
       await prisma.user.update({ where: { id: user.id }, data: { requestedRole: role } });
       const req = await prisma.facilitySwitchRequest.create({
@@ -348,27 +393,25 @@ if (!token || !publicUrl) {
           status: 'pending'
         }
       });
+
       state.delete(ctx.from.id);
-      endFlow(ctx); // ← Important: exit the flow
+      endFlow(ctx);
+
       const facility = await prisma.facility.findUnique({ where: { id: s.facilityId } });
-      await ctx.editMessageText(
-`📝 *Join Request Received*
-—  
-Facility: ${facility?.name}
-Requested Role: ${role}
-Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
+      await safeEditOrReply(ctx,
+        `📝 *Join Request Received*\n—  \nFacility: ${facility?.name}\nRequested Role: ${role}\nStatus: ⏳ pending (awaiting admin approval)`,
+        { parse_mode: 'Markdown' }
       );
+
       if (process.env.MASTER_ID) {
-        try {
-          await bot.telegram.sendMessage(
-            process.env.MASTER_ID,
-            `🔔 Join request:\n• user ${tgId.toString()} → ${facility?.name}\n• role: ${role}\n• req#${req.id.toString()}`
-          );
-        } catch {}
+        bot.telegram.sendMessage(
+          process.env.MASTER_ID,
+          `🔔 Join request:\n• user ${tgId.toString()} → ${facility?.name}\n• role: ${role}\n• req#${req.id.toString()}`
+        ).catch(()=>{});
       }
     } catch (e) {
       console.error('JOIN_CREATE_REQ_ERROR', e);
-      endFlow(ctx); // ← Important: exit the flow on error
+      endFlow(ctx);
       await ctx.answerCbQuery('Error creating request', { show_alert: true });
     }
   });
@@ -377,7 +420,6 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
   const PAGE_SIZE = 5;
 
   bot.action(/^wo:my\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => { });
     const page = parseInt(ctx.match[1], 10) || 1;
     const filter = ctx.match[2];
     const { user } = await requireMembership(ctx);
@@ -416,13 +458,12 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
     await ctx.reply(msg, { reply_markup: { inline_keyboard: [nav].filter(r => r.length).concat([filters]).concat([[{ text: '⬅️ Back', callback_data: 'back_main' }]]) } });
   });
 
-  bot.action('back_main', async (ctx) => { await ctx.answerCbQuery().catch(() => { }); return showMainMenu(ctx); });
+  bot.action('back_main', async (ctx) => { return showMainMenu(ctx); });
 
   // === Minimal new issue conversation (3 steps) ===
   const _scenes = {}; // light-weight memory
 
   bot.action('wo:start_new', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => { });
     await requireMembership(ctx);
     _scenes[ctx.from.id] = { step: 1, data: {} };
     return ctx.reply('Department? (e.g., civil/electrical/mechanical)');
@@ -449,7 +490,6 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
 
   // === Manage requests (admin/tech) + status updates + timeline ===
   bot.action(/^wo:manage\|(\d+)\|(all|Open|In Progress|Closed)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => { });
     const page = parseInt(ctx.match[1], 10) || 1;
     const filter = ctx.match[2];
     const { user, member } = await requireMembership(ctx);
@@ -496,7 +536,6 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
 
   // تحديث حالة + Timeline
   bot.action(/^wo:status\|(\d+)\|(Open|In Progress|Closed)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => { });
     const id = BigInt(ctx.match[1]);
     const newLabel = ctx.match[2]; // human label
     const newStatus = newLabel.toLowerCase().replace(' ', '_'); // prisma enum توقع
@@ -561,120 +600,142 @@ Status: ⏳ pending (awaiting admin approval)`, { parse_mode: 'Markdown' }
     }
   });
 
-  bot.on('callback_query', async (ctx, next) => {
-    const data = ctx.callbackQuery?.data || '';
-    if (!['mf_list','mj_list','mf_list_fac'].includes(data) && !data.startsWith('mf_') && !data.startsWith('mj_')) return next();
+  // === Master Panel Actions ===
+  // Pending facilities
+  bot.action('mf_list', async (ctx) => {
     if (!isMaster(ctx)) {
       await ctx.answerCbQuery('Not allowed', { show_alert: true });
       return;
     }
 
-    // Pending facilities
-    if (data === 'mf_list') {
-      await ctx.answerCbQuery().catch(() => {});
-      const items = await prisma.facility.findMany({ where: { isActive: false }, take: 10, orderBy: { createdAt: 'asc' } });
-      if (!items.length) return ctx.answerCbQuery('No pending facilities', { show_alert: true });
-      const lines = items.map(f => `• ${f.id.toString()} — ${f.name}`).join('\n');
-      await ctx.editMessageText(`🏢 Pending Facilities:\n${lines}\n\nChoose facility to activate with plan:`, kb(
-        items.map(f => ([
-          { text: `✅ Free #${f.id.toString()}`,     callback_data: `mf_appr_Free_${f.id.toString()}` },
-          { text: `✅ Pro #${f.id.toString()}`,      callback_data: `mf_appr_Pro_${f.id.toString()}` },
-          { text: `✅ Business #${f.id.toString()}`, callback_data: `mf_appr_Business_${f.id.toString()}` },
-        ]))
-      ));
+    const items = await prisma.facility.findMany({ where: { isActive: false }, take: 10, orderBy: { createdAt: 'asc' } });
+    if (!items.length) return ctx.answerCbQuery('No pending facilities', { show_alert: true });
+    const lines = items.map(f => `• ${f.id.toString()} — ${f.name}`).join('\n');
+    await safeEditOrReply(ctx, `🏢 Pending Facilities:\n${lines}\n\nChoose facility to activate with plan:`, kb(
+      items.map(f => ([
+        { text: `✅ Free #${f.id.toString()}`,     callback_data: `mf_appr_Free_${f.id.toString()}` },
+        { text: `✅ Pro #${f.id.toString()}`,      callback_data: `mf_appr_Pro_${f.id.toString()}` },
+        { text: `✅ Business #${f.id.toString()}`, callback_data: `mf_appr_Business_${f.id.toString()}` },
+      ]))
+    ));
+  });
+
+  // Approve facility
+  bot.action(/^mf_appr_(Free|Pro|Business)_(\d+)$/, async (ctx) => {
+    if (!isMaster(ctx)) {
+      await ctx.answerCbQuery('Not allowed', { show_alert: true });
       return;
     }
-    if (data.startsWith('mf_appr_')) {
-      await ctx.answerCbQuery().catch(() => {});
-      const [, , plan, fidStr] = data.split('_'); // ['mf','appr','Free','123']
-      const facilityId = BigInt(fidStr);
-      await prisma.facility.update({ where: { id: facilityId }, data: { isActive: true, planTier: plan } });
-      await ctx.answerCbQuery('Facility activated ✅');
-      return ctx.editMessageText(`✅ Facility #${fidStr} activated with plan: ${plan}`);
-    }
+    const plan = ctx.match[1];
+    const fidStr = ctx.match[2];
+    const facilityId = BigInt(fidStr);
+    await prisma.facility.update({ where: { id: facilityId }, data: { isActive: true, planTier: plan } });
+    await ctx.answerCbQuery('Facility activated ✅');
+    return safeEditOrReply(ctx, `✅ Facility #${fidStr} activated with plan: ${plan}`);
+  });
 
-    // Pending join requests
-    if (data === 'mj_list') {
-      await ctx.answerCbQuery().catch(() => {});
-      const reqs = await prisma.facilitySwitchRequest.findMany({
-        where: { status: 'pending' }, take: 10, orderBy: { createdAt: 'asc' }
-      });
-      if (!reqs.length) return ctx.answerCbQuery('No pending requests', { show_alert: true });
-      const lines = await Promise.all(reqs.map(async r => {
-        const u = await prisma.user.findUnique({ where: { id: r.userId } });
-        const f = r.toFacilityId ? await prisma.facility.findUnique({ where: { id: r.toFacilityId } }) : null;
-        return `• req#${r.id.toString()} — tg:${u?.tgId?.toString() ?? '?'} → ${f?.name ?? '?'}`
-      }));
-      await ctx.editMessageText(
-        `👥 Pending Join Requests:\n${lines.join('\n')}\n\nChoose action:`,
-        kb(reqs.map(r => ([
-          { text: `✅ Approve #${r.id.toString()}`, callback_data: `mj_appr_${r.id.toString()}` },
-          { text: `⛔ Deny #${r.id.toString()}`,    callback_data: `mj_den_${r.id.toString()}` },
-        ])))
-      );
+  // Pending join requests
+  bot.action('mj_list', async (ctx) => {
+    if (!isMaster(ctx)) {
+      await ctx.answerCbQuery('Not allowed', { show_alert: true });
       return;
     }
-    if (data.startsWith('mj_appr_')) {
-      await ctx.answerCbQuery().catch(() => {});
-      const rid = BigInt(data.replace('mj_appr_', ''));
-      const req = await prisma.facilitySwitchRequest.findUnique({ where: { id: rid } });
-      if (!req) return ctx.answerCbQuery('Not found', { show_alert: true });
-      const user = await prisma.user.findUnique({ where: { id: req.userId } });
-      if (!user) return ctx.answerCbQuery('User missing', { show_alert: true });
-      const role = user.requestedRole || 'user';
-      await prisma.facilityMember.upsert({
-        where: { userId_facilityId: { userId: user.id, facilityId: req.toFacilityId } },
-        create: { userId: user.id, facilityId: req.toFacilityId, role },
-        update: { role }
+    const reqs = await prisma.facilitySwitchRequest.findMany({
+      where: { status: 'pending' }, take: 10, orderBy: { createdAt: 'asc' }
+    });
+    if (!reqs.length) return ctx.answerCbQuery('No pending requests', { show_alert: true });
+    const lines = await Promise.all(reqs.map(async r => {
+      const u = await prisma.user.findUnique({ where: { id: r.userId } });
+      const f = r.toFacilityId ? await prisma.facility.findUnique({ where: { id: r.toFacilityId } }) : null;
+      return `• req#${r.id.toString()} — tg:${u?.tgId?.toString() ?? '?'} → ${f?.name ?? '?'}`
+    }));
+    await safeEditOrReply(ctx,
+      `👥 Pending Join Requests:\n${lines.join('\n')}\n\nChoose action:`,
+      kb(reqs.map(r => ([
+        { text: `✅ Approve #${r.id.toString()}`, callback_data: `mj_appr_${r.id.toString()}` },
+        { text: `⛔ Deny #${r.id.toString()}`,    callback_data: `mj_den_${r.id.toString()}` },
+      ])))
+    );
+  });
+  // Approve join request
+  bot.action(/^mj_appr_(\d+)$/, async (ctx) => {
+    if (!isMaster(ctx)) {
+      await ctx.answerCbQuery('Not allowed', { show_alert: true });
+      return;
+    }
+    const rid = BigInt(ctx.match[1]);
+    const req = await prisma.facilitySwitchRequest.findUnique({ where: { id: rid } });
+    if (!req) return ctx.answerCbQuery('Not found', { show_alert: true });
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user) return ctx.answerCbQuery('User missing', { show_alert: true });
+    const role = user.requestedRole || 'user';
+    await prisma.facilityMember.upsert({
+      where: { userId_facilityId: { userId: user.id, facilityId: req.toFacilityId } },
+      create: { userId: user.id, facilityId: req.toFacilityId, role },
+      update: { role }
+    });
+    await prisma.user.update({ where: { id: user.id }, data: { status: 'active', activeFacilityId: req.toFacilityId } });
+    await prisma.facilitySwitchRequest.update({ where: { id: req.id }, data: { status: 'approved' } });
+    if (user.tgId) { 
+      bot.telegram.sendMessage(user.tgId.toString(), `✅ Your join request has been approved.`).catch(()=>{});
+    }
+    await ctx.answerCbQuery('Approved ✅');
+    return safeEditOrReply(ctx, `✅ Approved req #${rid.toString()}`);
+  });
+
+  // Deny join request
+  bot.action(/^mj_den_(\d+)$/, async (ctx) => {
+    if (!isMaster(ctx)) {
+      await ctx.answerCbQuery('Not allowed', { show_alert: true });
+      return;
+    }
+    const rid = BigInt(ctx.match[1]);
+    const req = await prisma.facilitySwitchRequest.findUnique({ where: { id: rid } });
+    if (!req) return ctx.answerCbQuery('Not found', { show_alert: true });
+    await prisma.facilitySwitchRequest.update({ where: { id: rid }, data: { status: 'rejected' } });
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (user?.tgId) { 
+      bot.telegram.sendMessage(user.tgId.toString(), `⛔ Your join request has been denied.`).catch(()=>{});
+    }
+    await ctx.answerCbQuery('Denied');
+    return safeEditOrReply(ctx, `⛔ Denied req #${rid.toString()}`);
+  });
+
+  // List facilities for master (active OR default)
+  bot.action('mf_list_fac', async (ctx) => {
+    if (!isMaster(ctx)) {
+      await ctx.answerCbQuery('Not allowed', { show_alert: true });
+      return;
+    }
+    try {
+      const facs = await prisma.facility.findMany({
+        where: { OR: [{ isActive: true }, { isDefault: true }] },
+        orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+        take: 100
       });
-      await prisma.user.update({ where: { id: user.id }, data: { status: 'active', activeFacilityId: req.toFacilityId } });
-      await prisma.facilitySwitchRequest.update({ where: { id: req.id }, data: { status: 'approved' } });
-      if (user.tgId) { try { await bot.telegram.sendMessage(user.tgId.toString(), `✅ Your join request has been approved.`); } catch {} }
-      await ctx.answerCbQuery('Approved ✅');
-      return ctx.editMessageText(`✅ Approved req #${rid.toString()}`);
-    }
-    if (data.startsWith('mj_den_')) {
-      await ctx.answerCbQuery().catch(() => {});
-      const rid = BigInt(data.replace('mj_den_', ''));
-      const req = await prisma.facilitySwitchRequest.findUnique({ where: { id: rid } });
-      if (!req) return ctx.answerCbQuery('Not found', { show_alert: true });
-      await prisma.facilitySwitchRequest.update({ where: { id: rid }, data: { status: 'rejected' } });
-      const user = await prisma.user.findUnique({ where: { id: req.userId } });
-      if (user?.tgId) { try { await bot.telegram.sendMessage(user.tgId.toString(), `⛔ Your join request has been denied.`); } catch {} }
-      await ctx.answerCbQuery('Denied');
-      return ctx.editMessageText(`⛔ Denied req #${rid.toString()}`);
-    }
 
-    // List facilities for master (active OR default)
-    if (data === 'mf_list_fac') {
-      try {
-        await ctx.answerCbQuery().catch(()=>{});
-        if (String(ctx.from.id) !== String(process.env.MASTER_ID)) return;
-
-        const facs = await prisma.facility.findMany({
-          where: { OR: [{ isActive: true }, { isDefault: true }] },
-          orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
-          take: 100
-        });
-
-        if (!facs.length) {
-          await ctx.reply('No facilities (active/default) found.');
-          return;
-        }
-
-        const lines = facs.map(f =>
-          `• ${f.name}  — ${f.isActive ? 'active' : 'inactive'}${f.isDefault ? ' • default' : ''}`
-        );
-        await ctx.reply(lines.join('\n'));
-      } catch (e) {
-        await ctx.reply('Failed to list facilities.');
+      if (!facs.length) {
+        await ctx.reply('No facilities (active/default) found.');
+        return;
       }
+
+      const lines = facs.map(f =>
+        `• ${f.name}  — ${f.isActive ? 'active' : 'inactive'}${f.isDefault ? ' • default' : ''}`
+      );
+      await ctx.reply(lines.join('\n'));
+    } catch (e) {
+      console.error('MF_LIST_FAC_ERR', e);
+      await ctx.reply('Failed to list facilities.');
     }
   });
 
   // Set webhook
-  const webhookUrl = `${publicUrl}${webhookPath}`;
-  bot.telegram.setWebhook(webhookUrl).catch(() => {});
+  // Normalize PUBLIC_URL to avoid double slashes
+  const normBase = publicUrl.replace(/\/+$/, '');
+  const webhookUrl = `${normBase}${webhookPath}`;
+  bot.telegram.setWebhook(webhookUrl).catch((e) => {
+    console.error('SET_WEBHOOK_ERR', e?.message);
+  });
 
   const handle = bot.webhookCallback(webhookPath);
   module.exports = async (req, res) => {
