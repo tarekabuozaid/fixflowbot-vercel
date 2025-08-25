@@ -297,53 +297,7 @@ if (!token || !publicUrl) {
     }
   });
 
-  // Start join flow from button: show active facilities
-  bot.on('callback_query', async (ctx, next) => {
-    const data = ctx.callbackQuery?.data || '';
-    if (data === 'start_join') {
-      try {
-        await ctx.answerCbQuery().catch(() => {});
-        beginFlow(ctx); // ← Important: mark that we're entering a flow
 
-        // جِلب منشآت قابلة للانضمام:
-        // - المفعّلة isActive=true
-        // - أو المعلّمة افتراضيًا isDefault=true (حتى لو غير مفعّلة)
-        const facilities = await prisma.facility.findMany({
-          where: {
-            OR: [{ isActive: true }, { isDefault: true }]
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 50
-        });
-
-        if (!facilities.length) {
-          endFlow(ctx);
-          await ctx.answerCbQuery('No facilities available to join', { show_alert: true }).catch(()=>{});
-          await ctx.reply('No facilities are available to join yet. Ask the master to activate or mark one as default.');
-          return;
-        }
-
-        const rows = facilities.map(f => ([
-          { text: `🏢 ${f.name}${f.isDefault ? ' • default' : ''}${!f.isActive ? ' (inactive)' : ''}`, callback_data: `join_fac_${f.id.toString()}` }
-        ]));
-
-        // حاول تعديل الرسالة؛ ولو فشل (مثلاً الرسالة ليست من البوت) استخدم reply
-        try {
-          await ctx.editMessageText('Choose facility to join:', {
-            reply_markup: { inline_keyboard: rows }
-          });
-        } catch {
-          await ctx.reply('Choose facility to join:', {
-            reply_markup: { inline_keyboard: rows }
-          });
-        }
-      } catch (e) {
-        endFlow(ctx);
-        await ctx.reply('Failed to start join flow. Please try again.');
-      }
-    }
-    return next();
-  });
 
     // Pick facility → move to role selection
   bot.action(/^join_fac_(\d+)$/, async (ctx) => {
@@ -729,21 +683,70 @@ if (!token || !publicUrl) {
     }
   });
 
-  // Set webhook
-  // Normalize PUBLIC_URL to avoid double slashes
-  const normBase = publicUrl.replace(/\/+$/, '');
-  const webhookUrl = `${normBase}${webhookPath}`;
-  bot.telegram.setWebhook(webhookUrl).catch((e) => {
-    console.error('SET_WEBHOOK_ERR', e?.message);
-  });
+  // --- Webhook management (do NOT auto-set on every cold start) ---
+  const webhookUrl = `${publicUrl}${webhookPath}`;
 
-  const handle = bot.webhookCallback(webhookPath);
+  // Prepare one callback to use for incoming POST updates
+  const handle = bot.webhookCallback(webhookPath, { timeout: 9000 });
+
+  // Small helper to call Telegram API safely
+  async function safeCall(promise) {
+    try { return await promise; } catch (e) { return { _error: e?.message || String(e) }; }
+  }
+
   module.exports = async (req, res) => {
-    if (req.method !== 'POST') {
-      res.statusCode = 200;
-      return res.end('OK');
+    // 1) Management ops (GET with ?op=...)
+    if (req.method === 'GET') {
+      const op = (req.query?.op || req.query?.OP || '').toString().toLowerCase();
+
+      // Only master can use management ops (optional but recommended)
+      // Tip: hit it from your browser after you set MASTER_ID env.
+      if (op === 'get') {
+        const info = await safeCall(bot.telegram.getWebhookInfo());
+        res.setHeader('Content-Type', 'application/json');
+        res.status(200).end(JSON.stringify({ webhookUrl, info }, null, 2));
+        return;
+      }
+      if (op === 'set') {
+        const del = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: false }));
+        const set = await safeCall(bot.telegram.setWebhook(webhookUrl /* , { secret_token: process.env.TG_SECRET } */));
+        const info = await safeCall(bot.telegram.getWebhookInfo());
+        res.setHeader('Content-Type', 'application/json');
+        res.status(200).end(JSON.stringify({ webhookUrl, deleted: del, set, info }, null, 2));
+        return;
+      }
+      if (op === 'del') {
+        const out = await safeCall(bot.telegram.deleteWebhook({ drop_pending_updates: false }));
+        res.setHeader('Content-Type', 'application/json');
+        res.status(200).end(JSON.stringify({ deleted: out }, null, 2));
+        return;
+      }
+
+      // Health probe / default GET
+      res.status(200).end('OK');
+      return;
     }
-    return handle(req, res);
+
+    // 2) Incoming updates (POST from Telegram)
+    if (req.method === 'POST') {
+      // Optional: verify secret header if you configured secret_token above
+      // const secret = req.headers['x-telegram-bot-api-secret-token'];
+      // if (process.env.TG_SECRET && secret !== process.env.TG_SECRET) {
+      //   res.statusCode = 401; return res.end('Bad secret');
+      // }
+
+      try {
+        return handle(req, res);
+      } catch (e) {
+        console.error('WEBHOOK_HANDLE_ERR', e?.message);
+        res.statusCode = 200; // avoid retries storm; log will show the error
+        return res.end('OK');
+      }
+    }
+
+    // Everything else
+    res.statusCode = 200;
+    return res.end('OK');
   };
 
   module.exports.config = { runtime: 'nodejs20' };
