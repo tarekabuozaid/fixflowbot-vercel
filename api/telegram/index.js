@@ -78,6 +78,18 @@ async function showMainMenu(ctx) {
     
     const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
     buttons.push([Markup.button.callback(notificationText, 'notifications')]);
+    
+    // Add reminders button
+    const activeReminders = await prisma.reminder.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        isActive: true,
+        scheduledFor: { gte: new Date() }
+      }
+    });
+    
+    const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
+    buttons.push([Markup.button.callback(reminderText, 'reminders')]);
   } else {
     buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
     buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
@@ -250,114 +262,166 @@ bot.on('text', async (ctx, next) => {
       }
       // Step 4 handled via callback
     }
-    // Work order flow
-    if (flowState.flow === 'wo_new') {
-      if (flowState.step === 4) {
-        // Step 4: Location
-        flowState.data.location = text.slice(0, 100);
-        if (flowState.data.location.length < 2) {
-          return ctx.reply('Location must be at least 2 characters. Try again:');
-        }
-        flowState.step = 5;
-        flows.set(ctx.from.id, flowState);
-        return ctx.reply(`🔧 Work Order Creation (5/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\n\n🔧 Enter equipment/device name (optional, press /skip to skip):`);
-      }
-      if (flowState.step === 5) {
-        // Step 5: Equipment (optional)
-        if (text.toLowerCase() === '/skip') {
-          flowState.data.equipment = null;
-        } else {
-          flowState.data.equipment = text.slice(0, 100);
-        }
-        flowState.step = 6;
-        flows.set(ctx.from.id, flowState);
-        return ctx.reply(`🔧 Work Order Creation (6/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\nEquipment: ${flowState.data.equipment || 'N/A'}\n\n📝 Please describe the issue in detail:`);
-      }
-      if (flowState.step === 6) {
-        // Step 6: Description
-        const desc = text.slice(0, 500);
-        if (desc.length < 10) {
-          return ctx.reply('Description must be at least 10 characters. Please provide more details:');
-        }
-        
-        const { user } = await requireActiveMembership(ctx);
-                 const wo = await prisma.workOrder.create({
-           data: {
-             facilityId: user.activeFacilityId,
-             createdByUserId: user.id,
-             typeOfWork: flowState.data.typeOfWork,
-             typeOfService: flowState.data.typeOfService,
-             priority: flowState.data.priority,
-             location: flowState.data.location,
-             equipment: flowState.data.equipment,
-             description: desc,
-             status: 'open'
-           }
-         });
-         
-         // Create notification for work order creation
-         await createNotification(
-           user.id,
-           user.activeFacilityId,
-           'work_order_created',
-           'New Work Order Created',
-           `Work Order #${wo.id.toString()} has been created.\nType: ${flowState.data.typeOfWork}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}`,
-           { workOrderId: wo.id.toString() }
-         );
-         
-         // Send high priority alert to admins/supervisors
-         if (flowState.data.priority === 'high') {
-           const admins = await prisma.facilityMember.findMany({
-             where: {
-               facilityId: user.activeFacilityId,
-               role: { in: ['facility_admin', 'supervisor'] }
-             },
-             include: { user: true }
-           });
-           
-           for (const admin of admins) {
-             if (admin.userId !== user.id) {
-               await createNotification(
-                 admin.userId,
-                 user.activeFacilityId,
-                 'high_priority_alert',
-                 'High Priority Work Order',
-                 `🚨 High priority work order #${wo.id.toString()} created by ${user.firstName || 'User'}.\nType: ${flowState.data.typeOfWork}\nLocation: ${flowState.data.location}`,
-                 { workOrderId: wo.id.toString() }
-               );
-             }
-           }
+         // Work order flow
+     if (flowState.flow === 'wo_new') {
+       if (flowState.step === 4) {
+         // Step 4: Location
+         flowState.data.location = text.slice(0, 100);
+         if (flowState.data.location.length < 2) {
+           return ctx.reply('Location must be at least 2 characters. Try again:');
          }
-        
-        flows.delete(ctx.from.id);
-        
-        const priorityEmoji = {
-          'high': '🔴',
-          'medium': '🟡',
-          'low': '🟢'
-        };
-        
-        await ctx.reply(
-          `✅ Work Order Created Successfully!\n\n` +
-          `📋 **Work Order #${wo.id.toString()}**\n` +
-          `🔧 Type: ${flowState.data.typeOfWork}\n` +
-          `⚡ Service: ${flowState.data.typeOfService}\n` +
-          `${priorityEmoji[flowState.data.priority]} Priority: ${flowState.data.priority}\n` +
-          `📍 Location: ${flowState.data.location}\n` +
-          `🔧 Equipment: ${flowState.data.equipment || 'N/A'}\n` +
-          `📝 Description: ${desc.slice(0, 100)}${desc.length > 100 ? '...' : ''}\n\n` +
-          `Status: 🔵 Open`,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [Markup.button.callback('🏠 Back to Menu', 'back_to_menu')]
-              ]
+         flowState.step = 5;
+         flows.set(ctx.from.id, flowState);
+         return ctx.reply(`🔧 Work Order Creation (5/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\n\n🔧 Enter equipment/device name (optional, press /skip to skip):`);
+       }
+       if (flowState.step === 5) {
+         // Step 5: Equipment (optional)
+         if (text.toLowerCase() === '/skip') {
+           flowState.data.equipment = null;
+         } else {
+           flowState.data.equipment = text.slice(0, 100);
+         }
+         flowState.step = 6;
+         flows.set(ctx.from.id, flowState);
+         return ctx.reply(`🔧 Work Order Creation (6/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\nEquipment: ${flowState.data.equipment || 'N/A'}\n\n📝 Please describe the issue in detail:`);
+       }
+       if (flowState.step === 6) {
+         // Step 6: Description
+         const desc = text.slice(0, 500);
+         if (desc.length < 10) {
+           return ctx.reply('Description must be at least 10 characters. Please provide more details:');
+         }
+         
+         const { user } = await requireActiveMembership(ctx);
+                  const wo = await prisma.workOrder.create({
+            data: {
+              facilityId: user.activeFacilityId,
+              createdByUserId: user.id,
+              typeOfWork: flowState.data.typeOfWork,
+              typeOfService: flowState.data.typeOfService,
+              priority: flowState.data.priority,
+              location: flowState.data.location,
+              equipment: flowState.data.equipment,
+              description: desc,
+              status: 'open'
+            }
+          });
+          
+          // Create notification for work order creation
+          await createNotification(
+            user.id,
+            user.activeFacilityId,
+            'work_order_created',
+            'New Work Order Created',
+            `Work Order #${wo.id.toString()} has been created.\nType: ${flowState.data.typeOfWork}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}`,
+            { workOrderId: wo.id.toString() }
+          );
+          
+          // Send high priority alert to admins/supervisors
+          if (flowState.data.priority === 'high') {
+            const admins = await prisma.facilityMember.findMany({
+              where: {
+                facilityId: user.activeFacilityId,
+                role: { in: ['facility_admin', 'supervisor'] }
+              },
+              include: { user: true }
+            });
+            
+            for (const admin of admins) {
+              if (admin.userId !== user.id) {
+                await createNotification(
+                  admin.userId,
+                  user.activeFacilityId,
+                  'high_priority_alert',
+                  'High Priority Work Order',
+                  `🚨 High priority work order #${wo.id.toString()} created by ${user.firstName || 'User'}.\nType: ${flowState.data.typeOfWork}\nLocation: ${flowState.data.location}`,
+                  { workOrderId: wo.id.toString() }
+                );
+              }
             }
           }
-        );
-        return;
-      }
-    }
+         
+         flows.delete(ctx.from.id);
+         
+         const priorityEmoji = {
+           'high': '🔴',
+           'medium': '🟡',
+           'low': '🟢'
+         };
+         
+         await ctx.reply(
+           `✅ Work Order Created Successfully!\n\n` +
+           `📋 **Work Order #${wo.id.toString()}**\n` +
+           `🔧 Type: ${flowState.data.typeOfWork}\n` +
+           `⚡ Service: ${flowState.data.typeOfService}\n` +
+           `${priorityEmoji[flowState.data.priority]} Priority: ${flowState.data.priority}\n` +
+           `📍 Location: ${flowState.data.location}\n` +
+           `🔧 Equipment: ${flowState.data.equipment || 'N/A'}\n` +
+           `📝 Description: ${desc.slice(0, 100)}${desc.length > 100 ? '...' : ''}\n\n` +
+           `Status: 🔵 Open`,
+           {
+             reply_markup: {
+               inline_keyboard: [
+                 [Markup.button.callback('🏠 Back to Menu', 'back_to_menu')]
+               ]
+             }
+           }
+         );
+         return;
+       }
+     }
+     
+     // Create reminder flow
+     if (flowState.flow === 'create_reminder') {
+       if (flowState.step === 2) {
+         // Step 2: Title
+         flowState.data.title = text.slice(0, 100);
+         if (flowState.data.title.length < 3) {
+           return ctx.reply('Title must be at least 3 characters. Try again:');
+         }
+         flowState.step = 3;
+         flows.set(ctx.from.id, flowState);
+         return ctx.reply(`⏰ **Create Reminder** (3/5)\nType: ${flowState.data.type}\nTitle: ${flowState.data.title}\n\nEnter the reminder message (max 500 chars):`);
+       }
+       if (flowState.step === 3) {
+         // Step 3: Message
+         flowState.data.message = text.slice(0, 500);
+         if (flowState.data.message.length < 5) {
+           return ctx.reply('Message must be at least 5 characters. Try again:');
+         }
+         flowState.step = 4;
+         flows.set(ctx.from.id, flowState);
+         return ctx.reply(`⏰ **Create Reminder** (4/5)\nType: ${flowState.data.type}\nTitle: ${flowState.data.title}\nMessage: ${flowState.data.message.slice(0, 50)}${flowState.data.message.length > 50 ? '...' : ''}\n\nEnter the date and time (format: YYYY-MM-DD HH:MM):`);
+       }
+       if (flowState.step === 4) {
+         // Step 4: Date and Time
+         const dateTimeStr = text.trim();
+         const scheduledFor = new Date(dateTimeStr);
+         
+         if (isNaN(scheduledFor.getTime())) {
+           return ctx.reply('Invalid date format. Please use YYYY-MM-DD HH:MM format (e.g., 2024-12-25 14:30):');
+         }
+         
+         if (scheduledFor <= new Date()) {
+           return ctx.reply('Scheduled time must be in the future. Please enter a future date and time:');
+         }
+         
+         flowState.data.scheduledFor = scheduledFor;
+         flowState.step = 5;
+         flows.set(ctx.from.id, flowState);
+         
+         const frequencyButtons = [
+           [Markup.button.callback('🔄 Once', 'reminder_frequency|once')],
+           [Markup.button.callback('📅 Daily', 'reminder_frequency|daily')],
+           [Markup.button.callback('📆 Weekly', 'reminder_frequency|weekly')],
+           [Markup.button.callback('📊 Monthly', 'reminder_frequency|monthly')]
+         ];
+         
+         return ctx.reply(`⏰ **Create Reminder** (5/5)\nType: ${flowState.data.type}\nTitle: ${flowState.data.title}\nScheduled for: ${scheduledFor.toLocaleDateString()} ${scheduledFor.toLocaleTimeString()}\n\nChoose frequency:`, {
+           reply_markup: { inline_keyboard: frequencyButtons }
+         });
+       }
+     }
   } catch (e) {
     console.error('FLOW_ERROR', e);
     flows.delete(ctx.from.id);
@@ -2287,6 +2351,353 @@ bot.action('notification_settings', async (ctx) => {
   } catch (error) {
     console.error('Error accessing notification settings:', error);
     await ctx.reply('⚠️ An error occurred while accessing settings.');
+  }
+});
+
+// === Reminder System ===
+// Helper function to create reminders
+async function createReminder(facilityId, createdByUserId, type, title, message, scheduledFor, frequency = 'once', data = null) {
+  try {
+    await prisma.reminder.create({
+      data: {
+        facilityId: BigInt(facilityId),
+        createdByUserId: BigInt(createdByUserId),
+        type,
+        title,
+        message,
+        scheduledFor,
+        frequency,
+        data: data ? JSON.parse(JSON.stringify(data)) : null
+      }
+    });
+  } catch (error) {
+    console.error('Error creating reminder:', error);
+  }
+}
+
+// Helper function to send reminder to facility members
+async function sendReminderToFacility(facilityId, title, message, buttons = null) {
+  try {
+    const members = await prisma.facilityMember.findMany({
+      where: { facilityId: BigInt(facilityId) },
+      include: { user: true }
+    });
+    
+    for (const member of members) {
+      if (member.user.tgId) {
+        try {
+          const options = buttons ? { reply_markup: { inline_keyboard: buttons } } : {};
+          await bot.telegram.sendMessage(member.user.tgId.toString(), `${title}\n\n${message}`, options);
+        } catch (error) {
+          console.error(`Error sending reminder to user ${member.userId}:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error sending reminder to facility:', error);
+  }
+}
+
+// Reminders menu
+bot.action('reminders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    const buttons = [
+      [Markup.button.callback('📅 My Reminders', 'my_reminders')],
+      [Markup.button.callback('📋 Facility Reminders', 'facility_reminders')]
+    ];
+    
+    if (membership) {
+      buttons.push([Markup.button.callback('➕ Create Reminder', 'create_reminder')]);
+      buttons.push([Markup.button.callback('📊 Reminder Settings', 'reminder_settings')]);
+    }
+    
+    buttons.push([Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]);
+    
+    await ctx.reply('⏰ **Reminders & Scheduling**\n\nManage your reminders and scheduled tasks:', {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error accessing reminders:', error);
+    await ctx.reply('⚠️ An error occurred while accessing reminders.');
+  }
+});
+
+// My reminders
+bot.action('my_reminders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const reminders = await prisma.reminder.findMany({
+      where: { 
+        createdByUserId: user.id,
+        isActive: true
+      },
+      orderBy: { scheduledFor: 'asc' },
+      take: 10
+    });
+    
+    if (!reminders.length) {
+      return ctx.reply('📅 No active reminders found.');
+    }
+    
+    const reminderButtons = reminders.map(reminder => {
+      const date = reminder.scheduledFor.toLocaleDateString() + ' ' + reminder.scheduledFor.toLocaleTimeString();
+      const shortTitle = reminder.title.length > 30 ? 
+        reminder.title.slice(0, 30) + '...' : reminder.title;
+      
+      return [Markup.button.callback(
+        `⏰ ${shortTitle} (${date})`,
+        `reminder_view|${reminder.id.toString()}`
+      )];
+    });
+    
+    const buttons = [
+      ...reminderButtons,
+      [Markup.button.callback('🔙 Back to Reminders', 'reminders')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(`📅 **My Reminders** (${reminders.length})\n\nClick on any reminder to view details:`, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing my reminders:', error);
+    await ctx.reply('⚠️ An error occurred while viewing reminders.');
+  }
+});
+
+// Facility reminders
+bot.action('facility_reminders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const reminders = await prisma.reminder.findMany({
+      where: { 
+        facilityId: user.activeFacilityId,
+        isActive: true
+      },
+      orderBy: { scheduledFor: 'asc' },
+      take: 10,
+      include: { createdByUser: true }
+    });
+    
+    if (!reminders.length) {
+      return ctx.reply('📅 No active facility reminders found.');
+    }
+    
+    const reminderButtons = reminders.map(reminder => {
+      const date = reminder.scheduledFor.toLocaleDateString() + ' ' + reminder.scheduledFor.toLocaleTimeString();
+      const shortTitle = reminder.title.length > 25 ? 
+        reminder.title.slice(0, 25) + '...' : reminder.title;
+      const creator = reminder.createdByUser.firstName || `User ${reminder.createdByUser.tgId?.toString() || reminder.createdByUser.id.toString()}`;
+      
+      return [Markup.button.callback(
+        `⏰ ${shortTitle}\n👤 ${creator} • ${date}`,
+        `reminder_view|${reminder.id.toString()}`
+      )];
+    });
+    
+    const buttons = [
+      ...reminderButtons,
+      [Markup.button.callback('🔙 Back to Reminders', 'reminders')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(`📅 **Facility Reminders** (${reminders.length})\n\nClick on any reminder to view details:`, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing facility reminders:', error);
+    await ctx.reply('⚠️ An error occurred while viewing facility reminders.');
+  }
+});
+
+// Create reminder
+bot.action('create_reminder', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can create reminders.');
+    }
+    
+    flows.set(ctx.from.id, { flow: 'create_reminder', step: 1, data: {}, ts: Date.now() });
+    
+    const reminderTypeButtons = [
+      [Markup.button.callback('📋 Work Order Due', 'reminder_type|work_order_due')],
+      [Markup.button.callback('🔍 Periodic Check', 'reminder_type|periodic_check')],
+      [Markup.button.callback('🔧 Maintenance Schedule', 'reminder_type|maintenance_schedule')],
+      [Markup.button.callback('📝 Custom Reminder', 'reminder_type|custom_reminder')],
+      [Markup.button.callback('🔙 Back to Reminders', 'reminders')]
+    ];
+    
+    await ctx.reply('⏰ **Create Reminder** (1/5)\nChoose the reminder type:', {
+      reply_markup: { inline_keyboard: reminderTypeButtons }
+    });
+  } catch (error) {
+    console.error('Error creating reminder:', error);
+    await ctx.reply('⚠️ An error occurred while creating reminder.');
+  }
+});
+
+// Handle reminder type selection
+bot.action(/reminder_type\|(work_order_due|periodic_check|maintenance_schedule|custom_reminder)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const flowState = flows.get(ctx.from.id);
+  if (!flowState || flowState.flow !== 'create_reminder') return;
+  
+  flowState.data.type = ctx.match[1];
+  flowState.step = 2;
+  flows.set(ctx.from.id, flowState);
+  
+  await ctx.reply(`⏰ **Create Reminder** (2/5)\nType: ${flowState.data.type}\n\nEnter the reminder title (max 100 chars):`);
+});
+
+// Handle reminder frequency selection
+bot.action(/reminder_frequency\|(once|daily|weekly|monthly)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const flowState = flows.get(ctx.from.id);
+  if (!flowState || flowState.flow !== 'create_reminder') return;
+  
+  const { user } = await requireActiveMembership(ctx);
+  flowState.data.frequency = ctx.match[1];
+  
+  // Create the reminder
+  await createReminder(
+    user.activeFacilityId,
+    user.id,
+    flowState.data.type,
+    flowState.data.title,
+    flowState.data.message,
+    flowState.data.scheduledFor,
+    flowState.data.frequency
+  );
+  
+  flows.delete(ctx.from.id);
+  
+  const frequencyText = {
+    'once': 'Once',
+    'daily': 'Daily',
+    'weekly': 'Weekly',
+    'monthly': 'Monthly'
+  };
+  
+  await ctx.reply(
+    `✅ Reminder Created Successfully!\n\n` +
+    `⏰ **${flowState.data.title}**\n` +
+    `📝 ${flowState.data.message}\n` +
+    `📅 **Scheduled for:** ${flowState.data.scheduledFor.toLocaleDateString()} ${flowState.data.scheduledFor.toLocaleTimeString()}\n` +
+    `🔄 **Frequency:** ${frequencyText[flowState.data.frequency]}\n` +
+    `📋 **Type:** ${flowState.data.type.replace(/_/g, ' ').toUpperCase()}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [Markup.button.callback('🔙 Back to Reminders', 'reminders')],
+          [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+        ]
+      }
+    }
+  );
+});
+
+// View reminder details
+bot.action(/reminder_view\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const reminderId = BigInt(ctx.match[1]);
+    
+    const reminder = await prisma.reminder.findFirst({
+      where: { 
+        id: reminderId,
+        facilityId: user.activeFacilityId
+      },
+      include: { createdByUser: true }
+    });
+    
+    if (!reminder) {
+      return ctx.reply('⚠️ Reminder not found.');
+    }
+    
+    const date = reminder.scheduledFor.toLocaleDateString() + ' ' + reminder.scheduledFor.toLocaleTimeString();
+    const creator = reminder.createdByUser.firstName || `User ${reminder.createdByUser.tgId?.toString() || reminder.createdByUser.id.toString()}`;
+    
+    const typeEmoji = {
+      'work_order_due': '📋',
+      'work_order_overdue': '🚨',
+      'periodic_check': '🔍',
+      'custom_reminder': '📝',
+      'maintenance_schedule': '🔧',
+      'inspection_due': '🔍'
+    };
+    
+    const frequencyText = {
+      'once': 'Once',
+      'daily': 'Daily',
+      'weekly': 'Weekly',
+      'monthly': 'Monthly',
+      'custom': 'Custom'
+    };
+    
+    const reminderDetails = 
+      `${typeEmoji[reminder.type] || '⏰'} **${reminder.title}**\n\n` +
+      `${reminder.message}\n\n` +
+      `📅 **Scheduled for:** ${date}\n` +
+      `🔄 **Frequency:** ${frequencyText[reminder.frequency]}\n` +
+      `👤 **Created by:** ${creator}\n` +
+      `📋 **Type:** ${reminder.type.replace(/_/g, ' ').toUpperCase()}\n` +
+      `✅ **Status:** ${reminder.isActive ? 'Active' : 'Inactive'}`;
+    
+    const buttons = [];
+    
+    // Only creator or facility admin can edit/delete
+    if (reminder.createdByUserId === user.id || 
+        (await prisma.facilityMember.findFirst({
+          where: { 
+            userId: user.id, 
+            facilityId: user.activeFacilityId,
+            role: 'facility_admin'
+          }
+        }))) {
+      buttons.push([Markup.button.callback('✏️ Edit Reminder', `reminder_edit|${reminder.id.toString()}`)]);
+      buttons.push([Markup.button.callback('❌ Delete Reminder', `reminder_delete|${reminder.id.toString()}`)]);
+    }
+    
+    buttons.push(
+      [Markup.button.callback('🔙 Back to Reminders', 'reminders')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    );
+    
+    await ctx.reply(reminderDetails, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing reminder:', error);
+    await ctx.reply('⚠️ An error occurred while viewing reminder.');
   }
 });
 
