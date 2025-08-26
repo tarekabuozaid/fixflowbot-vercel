@@ -361,20 +361,27 @@ bot.action(/master_member_approve\|(\d+)/, async (ctx) => {
 
 // Webhook handler for Vercel
 module.exports = async (req, res) => {
+  console.log('Webhook received:', { method: req.method, body: req.body });
+  
   if (req.method === 'POST') {
     try {
-      console.log('Received webhook:', req.body);
-      
       res.setTimeout(25000, () => {
         console.log('Request timeout');
         res.status(408).json({ error: 'Request timeout' });
       });
       
+      if (!req.body) {
+        console.error('No body received');
+        return res.status(400).json({ error: 'No body received' });
+      }
+      
+      console.log('Processing update:', JSON.stringify(req.body, null, 2));
       await bot.handleUpdate(req.body);
+      console.log('Update processed successfully');
       res.status(200).json({ ok: true });
     } catch (error) {
       console.error('Webhook error:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Internal server error', details: error.message });
     }
   } else {
     res.status(405).json({ error: 'Method not allowed' });
