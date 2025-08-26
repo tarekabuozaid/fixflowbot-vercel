@@ -57,6 +57,19 @@ async function showMainMenu(ctx) {
   if (user.status === 'active' && user.activeFacilityId) {
     buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
     buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (membership) {
+      buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
+    }
   } else {
     buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
     buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
@@ -947,6 +960,533 @@ bot.action('wo_stats', async (ctx) => {
   } catch (error) {
     console.error('Error viewing statistics:', error);
     await ctx.reply('⚠️ An error occurred while viewing statistics.');
+  }
+});
+
+// === Facility Dashboard ===
+bot.action('facility_dashboard', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access the dashboard.');
+    }
+    
+    // Get facility info
+    const facility = await prisma.facility.findUnique({
+      where: { id: user.activeFacilityId }
+    });
+    
+    // Get basic stats
+    const totalMembers = await prisma.facilityMember.count({
+      where: { facilityId: user.activeFacilityId }
+    });
+    
+    const totalWorkOrders = await prisma.workOrder.count({
+      where: { facilityId: user.activeFacilityId }
+    });
+    
+    const openWorkOrders = await prisma.workOrder.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        status: 'open'
+      }
+    });
+    
+    const buttons = [
+      [Markup.button.callback('👥 Manage Members', 'facility_members')],
+      [Markup.button.callback('📊 Facility Statistics', 'facility_stats')],
+      [Markup.button.callback('⚙️ Facility Settings', 'facility_settings')],
+      [Markup.button.callback('📋 All Work Orders', 'wo_facility_list')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    const dashboardMessage = 
+      `🏢 **Facility Dashboard**\n\n` +
+      `📋 **${facility.name}**\n` +
+      `📍 ${facility.city || 'No city'}\n` +
+      `📞 ${facility.phone || 'No phone'}\n` +
+      `💼 ${facility.planTier || 'No plan'}\n\n` +
+      `📊 **Quick Stats:**\n` +
+      `👥 Members: ${totalMembers}\n` +
+      `📋 Total Work Orders: ${totalWorkOrders}\n` +
+      `🔵 Open Orders: ${openWorkOrders}`;
+    
+    await ctx.reply(dashboardMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error accessing facility dashboard:', error);
+    await ctx.reply('⚠️ An error occurred while accessing the dashboard.');
+  }
+});
+
+// Manage facility members
+bot.action('facility_members', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can manage members.');
+    }
+    
+    const members = await prisma.facilityMember.findMany({
+      where: { facilityId: user.activeFacilityId },
+      include: { user: true },
+      orderBy: { createdAt: 'asc' }
+    });
+    
+    if (!members.length) {
+      return ctx.reply('👥 No members found in this facility.');
+    }
+    
+    const roleEmoji = {
+      'facility_admin': '👑',
+      'supervisor': '🛠️',
+      'user': '👤'
+    };
+    
+    const roleText = {
+      'facility_admin': 'Admin',
+      'supervisor': 'Supervisor',
+      'user': 'User'
+    };
+    
+    const memberButtons = members.map(member => {
+      const name = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
+      const role = roleEmoji[member.role] + ' ' + roleText[member.role];
+      
+      return [Markup.button.callback(
+        `${name} (${role})`,
+        `member_view|${member.id.toString()}`
+      )];
+    });
+    
+    const buttons = [
+      ...memberButtons,
+      [Markup.button.callback('➕ Invite Member', 'facility_invite')],
+      [Markup.button.callback('🔙 Back to Dashboard', 'facility_dashboard')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(`👥 **Facility Members** (${members.length})\n\nClick on any member to manage:`, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error managing facility members:', error);
+    await ctx.reply('⚠️ An error occurred while managing members.');
+  }
+});
+
+// View member details
+bot.action(/member_view\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const memberId = BigInt(ctx.match[1]);
+    
+    // Check if user is facility admin or supervisor
+    const currentMembership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!currentMembership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can view member details.');
+    }
+    
+    const member = await prisma.facilityMember.findFirst({
+      where: { 
+        id: memberId,
+        facilityId: user.activeFacilityId
+      },
+      include: { user: true }
+    });
+    
+    if (!member) {
+      return ctx.reply('⚠️ Member not found.');
+    }
+    
+    // Get member's work order stats
+    const memberWorkOrders = await prisma.workOrder.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        createdByUserId: member.userId
+      }
+    });
+    
+    const roleEmoji = {
+      'facility_admin': '👑',
+      'supervisor': '🛠️',
+      'user': '👤'
+    };
+    
+    const roleText = {
+      'facility_admin': 'Admin',
+      'supervisor': 'Supervisor',
+      'user': 'User'
+    };
+    
+    const memberDetails = 
+      `👤 **Member Details**\n\n` +
+      `📝 **Name:** ${member.user.firstName || 'Not set'}\n` +
+      `🆔 **Telegram ID:** ${member.user.tgId?.toString() || 'Not set'}\n` +
+      `${roleEmoji[member.role]} **Role:** ${roleText[member.role]}\n` +
+      `📋 **Work Orders:** ${memberWorkOrders}\n` +
+      `📅 **Joined:** ${member.createdAt.toLocaleDateString()}`;
+    
+    const buttons = [];
+    
+    // Only facility admins can change roles
+    if (currentMembership.role === 'facility_admin' && member.role !== 'facility_admin') {
+      if (member.role === 'user') {
+        buttons.push([Markup.button.callback('🛠️ Promote to Supervisor', `member_promote|${member.id.toString()}|supervisor`)]);
+      } else if (member.role === 'supervisor') {
+        buttons.push([Markup.button.callback('👑 Promote to Admin', `member_promote|${member.id.toString()}|facility_admin`)]);
+        buttons.push([Markup.button.callback('👤 Demote to User', `member_promote|${member.id.toString()}|user`)]);
+      }
+      buttons.push([Markup.button.callback('❌ Remove Member', `member_remove|${member.id.toString()}`)]);
+    }
+    
+    buttons.push(
+      [Markup.button.callback('🔙 Back to Members', 'facility_members')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    );
+    
+    await ctx.reply(memberDetails, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing member details:', error);
+    await ctx.reply('⚠️ An error occurred while viewing member details.');
+  }
+});
+
+// Promote/Demote member
+bot.action(/member_promote\|(\d+)\|(facility_admin|supervisor|user)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const memberId = BigInt(ctx.match[1]);
+    const newRole = ctx.match[2];
+    
+    // Check if user is facility admin
+    const currentMembership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: 'facility_admin'
+      }
+    });
+    
+    if (!currentMembership) {
+      return ctx.reply('⚠️ Only facility admins can change member roles.');
+    }
+    
+    const member = await prisma.facilityMember.findFirst({
+      where: { 
+        id: memberId,
+        facilityId: user.activeFacilityId
+      },
+      include: { user: true }
+    });
+    
+    if (!member) {
+      return ctx.reply('⚠️ Member not found.');
+    }
+    
+    if (member.role === 'facility_admin') {
+      return ctx.reply('⚠️ Cannot change admin role.');
+    }
+    
+    await prisma.facilityMember.update({
+      where: { id: memberId },
+      data: { role: newRole }
+    });
+    
+    const roleText = {
+      'facility_admin': 'Admin',
+      'supervisor': 'Supervisor',
+      'user': 'User'
+    };
+    
+    const memberName = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
+    
+    await ctx.reply(`✅ **${memberName}** role changed to **${roleText[newRole]}**`);
+    
+    // Refresh member view
+    setTimeout(async () => {
+      try {
+        await ctx.deleteMessage();
+        const event = { ...ctx, match: [null, memberId.toString()] };
+        await bot.action(`member_view|${memberId.toString()}`, event);
+      } catch (e) {
+        console.error('Error refreshing member view:', e);
+      }
+    }, 2000);
+    
+  } catch (error) {
+    console.error('Error promoting member:', error);
+    await ctx.reply('⚠️ An error occurred while changing member role.');
+  }
+});
+
+// Remove member
+bot.action(/member_remove\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const memberId = BigInt(ctx.match[1]);
+    
+    // Check if user is facility admin
+    const currentMembership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: 'facility_admin'
+      }
+    });
+    
+    if (!currentMembership) {
+      return ctx.reply('⚠️ Only facility admins can remove members.');
+    }
+    
+    const member = await prisma.facilityMember.findFirst({
+      where: { 
+        id: memberId,
+        facilityId: user.activeFacilityId
+      },
+      include: { user: true }
+    });
+    
+    if (!member) {
+      return ctx.reply('⚠️ Member not found.');
+    }
+    
+    if (member.role === 'facility_admin') {
+      return ctx.reply('⚠️ Cannot remove facility admin.');
+    }
+    
+    // Remove member
+    await prisma.facilityMember.delete({
+      where: { id: memberId }
+    });
+    
+    // Update user's activeFacilityId if it was this facility
+    if (member.user.activeFacilityId === user.activeFacilityId) {
+      await prisma.user.update({
+        where: { id: member.userId },
+        data: { 
+          activeFacilityId: null,
+          status: 'pending'
+        }
+      });
+    }
+    
+    const memberName = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
+    
+    await ctx.reply(`✅ **${memberName}** has been removed from the facility.`);
+    
+    // Go back to members list
+    setTimeout(async () => {
+      try {
+        await ctx.deleteMessage();
+        await bot.action('facility_members', ctx);
+      } catch (e) {
+        console.error('Error going back to members list:', e);
+      }
+    }, 2000);
+    
+  } catch (error) {
+    console.error('Error removing member:', error);
+    await ctx.reply('⚠️ An error occurred while removing member.');
+  }
+});
+
+// Facility statistics
+bot.action('facility_stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can view statistics.');
+    }
+    
+    // Get comprehensive statistics
+    const totalMembers = await prisma.facilityMember.count({
+      where: { facilityId: user.activeFacilityId }
+    });
+    
+    const totalWorkOrders = await prisma.workOrder.count({
+      where: { facilityId: user.activeFacilityId }
+    });
+    
+    const statusStats = await prisma.workOrder.groupBy({
+      by: ['status'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { status: true }
+    });
+    
+    const priorityStats = await prisma.workOrder.groupBy({
+      by: ['priority'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { priority: true }
+    });
+    
+    const roleStats = await prisma.facilityMember.groupBy({
+      by: ['role'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { role: true }
+    });
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const roleEmoji = {
+      'facility_admin': '👑',
+      'supervisor': '🛠️',
+      'user': '👤'
+    };
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const priorityText = {
+      'high': 'High',
+      'medium': 'Medium',
+      'low': 'Low'
+    };
+    
+    const roleText = {
+      'facility_admin': 'Admins',
+      'supervisor': 'Supervisors',
+      'user': 'Users'
+    };
+    
+    const statusSection = statusStats.map(s => 
+      `${statusEmoji[s.status]} ${statusText[s.status]}: ${s._count.status}`
+    ).join('\n');
+    
+    const prioritySection = priorityStats.map(p => 
+      `${priorityEmoji[p.priority]} ${priorityText[p.priority]}: ${p._count.priority}`
+    ).join('\n');
+    
+    const roleSection = roleStats.map(r => 
+      `${roleEmoji[r.role]} ${roleText[r.role]}: ${r._count.role}`
+    ).join('\n');
+    
+    const statsMessage = 
+      `📊 **Facility Statistics**\n\n` +
+      `👥 **Members:** ${totalMembers}\n` +
+      `📋 **Total Work Orders:** ${totalWorkOrders}\n\n` +
+      `📋 **Work Orders by Status:**\n${statusSection}\n\n` +
+      `🎯 **Work Orders by Priority:**\n${prioritySection}\n\n` +
+      `👥 **Members by Role:**\n${roleSection}`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Dashboard', 'facility_dashboard')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(statsMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing facility statistics:', error);
+    await ctx.reply('⚠️ An error occurred while viewing statistics.');
+  }
+});
+
+// Facility settings
+bot.action('facility_settings', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: 'facility_admin'
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins can access settings.');
+    }
+    
+    const facility = await prisma.facility.findUnique({
+      where: { id: user.activeFacilityId }
+    });
+    
+    const settingsMessage = 
+      `⚙️ **Facility Settings**\n\n` +
+      `📋 **Name:** ${facility.name}\n` +
+      `📍 **City:** ${facility.city || 'Not set'}\n` +
+      `📞 **Phone:** ${facility.phone || 'Not set'}\n` +
+      `💼 **Plan:** ${facility.planTier || 'Not set'}\n` +
+      `✅ **Status:** ${facility.isActive ? 'Active' : 'Inactive'}\n\n` +
+      `Settings management coming soon...`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Dashboard', 'facility_dashboard')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(settingsMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error accessing facility settings:', error);
+    await ctx.reply('⚠️ An error occurred while accessing settings.');
   }
 });
 
