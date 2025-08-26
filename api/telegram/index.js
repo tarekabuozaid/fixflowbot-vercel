@@ -1936,6 +1936,330 @@ bot.action('report_weekly', async (ctx) => {
   }
 });
 
+// === Additional Report Handlers ===
+
+// Work Order Analysis Report
+bot.action('report_work_orders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access reports.');
+    }
+    
+    // Get comprehensive work order analysis
+    const totalWorkOrders = await prisma.workOrder.count({
+      where: { facilityId: user.activeFacilityId }
+    });
+    
+    const statusStats = await prisma.workOrder.groupBy({
+      by: ['status'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { status: true }
+    });
+    
+    const priorityStats = await prisma.workOrder.groupBy({
+      by: ['priority'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { priority: true }
+    });
+    
+    const typeStats = await prisma.workOrder.groupBy({
+      by: ['typeOfWork'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { typeOfWork: true }
+    });
+    
+    const serviceStats = await prisma.workOrder.groupBy({
+      by: ['typeOfService'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { typeOfService: true }
+    });
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const priorityText = {
+      'high': 'High',
+      'medium': 'Medium',
+      'low': 'Low'
+    };
+    
+    const statusSection = statusStats.map(s => 
+      `${statusEmoji[s.status]} ${statusText[s.status]}: ${s._count.status}`
+    ).join('\n');
+    
+    const prioritySection = priorityStats.map(p => 
+      `${priorityEmoji[p.priority]} ${priorityText[p.priority]}: ${p._count.priority}`
+    ).join('\n');
+    
+    const typeSection = typeStats.map(t => 
+      `🔧 ${t.typeOfWork || 'Not set'}: ${t._count.typeOfWork}`
+    ).join('\n');
+    
+    const serviceSection = serviceStats.map(s => 
+      `⚡ ${s.typeOfService || 'Not set'}: ${s._count.typeOfService}`
+    ).join('\n');
+    
+    const analysisMessage = 
+      `📋 **Work Order Analysis Report**\n\n` +
+      `📊 **Total Work Orders:** ${totalWorkOrders}\n\n` +
+      `📋 **By Status:**\n${statusSection}\n\n` +
+      `🎯 **By Priority:**\n${prioritySection}\n\n` +
+      `🔧 **By Work Type:**\n${typeSection}\n\n` +
+      `⚡ **By Service Type:**\n${serviceSection}`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(analysisMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error generating work order analysis:', error);
+    await ctx.reply('⚠️ An error occurred while generating the analysis.');
+  }
+});
+
+// Member Activity Report
+bot.action('report_members', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access reports.');
+    }
+    
+    // Get member activity data
+    const members = await prisma.facilityMember.findMany({
+      where: { facilityId: user.activeFacilityId },
+      include: { 
+        user: true,
+        _count: {
+          select: {
+            // We'll get work orders count separately
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+    
+    const roleStats = await prisma.facilityMember.groupBy({
+      by: ['role'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { role: true }
+    });
+    
+    // Get work orders count for each member
+    const memberActivity = await Promise.all(
+      members.map(async (member) => {
+        const workOrdersCount = await prisma.workOrder.count({
+          where: { 
+            facilityId: user.activeFacilityId,
+            createdByUserId: member.userId
+          }
+        });
+        
+        const recentActivity = await prisma.workOrder.count({
+          where: { 
+            facilityId: user.activeFacilityId,
+            createdByUserId: member.userId,
+            createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Last 7 days
+          }
+        });
+        
+        return {
+          ...member,
+          workOrdersCount,
+          recentActivity
+        };
+      })
+    );
+    
+    const roleEmoji = {
+      'facility_admin': '👑',
+      'supervisor': '🛠️',
+      'user': '👤'
+    };
+    
+    const roleText = {
+      'facility_admin': 'Admins',
+      'supervisor': 'Supervisors',
+      'user': 'Users'
+    };
+    
+    const roleSection = roleStats.map(r => 
+      `${roleEmoji[r.role]} ${roleText[r.role]}: ${r._count.role}`
+    ).join('\n');
+    
+    const memberSection = memberActivity.map(member => {
+      const name = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
+      const role = roleEmoji[member.role] + ' ' + roleText[member.role];
+      return `👤 **${name}** (${role})\n   📋 Total Orders: ${member.workOrdersCount}\n   📅 Recent (7d): ${member.recentActivity}`;
+    }).join('\n\n');
+    
+    const activityMessage = 
+      `👥 **Member Activity Report**\n\n` +
+      `📊 **Role Distribution:**\n${roleSection}\n\n` +
+      `👤 **Member Details:**\n${memberSection}`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(activityMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error generating member activity report:', error);
+    await ctx.reply('⚠️ An error occurred while generating the report.');
+  }
+});
+
+// Priority Analysis Report
+bot.action('report_priorities', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access reports.');
+    }
+    
+    // Get priority analysis data
+    const priorityStats = await prisma.workOrder.groupBy({
+      by: ['priority'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { priority: true }
+    });
+    
+    const priorityByStatus = await prisma.workOrder.groupBy({
+      by: ['priority', 'status'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { priority: true }
+    });
+    
+    const highPriorityOpen = await prisma.workOrder.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        priority: 'high',
+        status: 'open'
+      }
+    });
+    
+    const highPriorityInProgress = await prisma.workOrder.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        priority: 'high',
+        status: 'in_progress'
+      }
+    });
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const priorityText = {
+      'high': 'High',
+      'medium': 'Medium',
+      'low': 'Low'
+    };
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const prioritySection = priorityStats.map(p => 
+      `${priorityEmoji[p.priority]} ${priorityText[p.priority]}: ${p._count.priority}`
+    ).join('\n');
+    
+    const priorityByStatusSection = priorityByStatus.map(p => 
+      `${priorityEmoji[p.priority]} ${priorityText[p.priority]} - ${statusEmoji[p.status]} ${statusText[p.status]}: ${p._count.priority}`
+    ).join('\n');
+    
+    const priorityMessage = 
+      `🎯 **Priority Analysis Report**\n\n` +
+      `📊 **Priority Distribution:**\n${prioritySection}\n\n` +
+      `📋 **Priority by Status:**\n${priorityByStatusSection}\n\n` +
+      `🚨 **High Priority Alerts:**\n` +
+      `🔴 High Priority Open: ${highPriorityOpen}\n` +
+      `🟡 High Priority In Progress: ${highPriorityInProgress}`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(priorityMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error generating priority analysis:', error);
+    await ctx.reply('⚠️ An error occurred while generating the analysis.');
+  }
+});
+
 // Notification settings
 bot.action('notification_settings', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
