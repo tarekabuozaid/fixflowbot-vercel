@@ -118,7 +118,20 @@ bot.action('wo_new', async (ctx) => {
   try {
     const { user } = await requireActiveMembership(ctx);
     flows.set(ctx.from.id, { flow: 'wo_new', step: 1, data: {}, ts: Date.now() });
-    await ctx.reply('📝 Please describe the issue (work order description):');
+    
+    // Step 1: Choose work type
+    const workTypeButtons = [
+      [Markup.button.callback('🔧 Maintenance', 'wo_type|maintenance')],
+      [Markup.button.callback('🔨 Repair', 'wo_type|repair')],
+      [Markup.button.callback('🛠️ Installation', 'wo_type|installation')],
+      [Markup.button.callback('🧹 Cleaning', 'wo_type|cleaning')],
+      [Markup.button.callback('📋 Inspection', 'wo_type|inspection')],
+      [Markup.button.callback('⚡ Other', 'wo_type|other')]
+    ];
+    
+    await ctx.reply('🔧 Work Order Creation (1/6)\nChoose the type of work:', {
+      reply_markup: { inline_keyboard: workTypeButtons }
+    });
   } catch (e) {
     await ctx.reply('⚠️ You must be an active member of a facility to create a work order.');
   }
@@ -136,8 +149,32 @@ bot.action('wo_list', async (ctx) => {
     if (!wos.length) {
       return ctx.reply('🔍 No work orders found.');
     }
-    const lines = wos.map(wo => `#${wo.id.toString()} — ${wo.status} — ${wo.description.slice(0, 50)}`);
-    await ctx.reply(lines.join('\n'));
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const lines = wos.map(wo => {
+      const priority = priorityEmoji[wo.priority] || '⚪';
+      const status = statusEmoji[wo.status] || '⚪';
+      const type = wo.typeOfWork ? `[${wo.typeOfWork}]` : '';
+      const location = wo.location ? `📍${wo.location}` : '';
+      
+      return `${status} **#${wo.id.toString()}** ${priority} ${type}\n` +
+             `📝 ${wo.description.slice(0, 60)}${wo.description.length > 60 ? '...' : ''}\n` +
+             `${location} • ${wo.createdAt.toLocaleDateString()}`;
+    });
+    
+    await ctx.reply(`📋 **Your Work Orders** (${wos.length})\n\n${lines.join('\n\n')}`);
   } catch {
     await ctx.reply('⚠️ You must be an active member of a facility to view work orders.');
   }
@@ -188,19 +225,75 @@ bot.on('text', async (ctx, next) => {
     }
     // Work order flow
     if (flowState.flow === 'wo_new') {
-      if (flowState.step === 1) {
+      if (flowState.step === 4) {
+        // Step 4: Location
+        flowState.data.location = text.slice(0, 100);
+        if (flowState.data.location.length < 2) {
+          return ctx.reply('Location must be at least 2 characters. Try again:');
+        }
+        flowState.step = 5;
+        flows.set(ctx.from.id, flowState);
+        return ctx.reply(`🔧 Work Order Creation (5/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\n\n🔧 Enter equipment/device name (optional, press /skip to skip):`);
+      }
+      if (flowState.step === 5) {
+        // Step 5: Equipment (optional)
+        if (text.toLowerCase() === '/skip') {
+          flowState.data.equipment = null;
+        } else {
+          flowState.data.equipment = text.slice(0, 100);
+        }
+        flowState.step = 6;
+        flows.set(ctx.from.id, flowState);
+        return ctx.reply(`🔧 Work Order Creation (6/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\nEquipment: ${flowState.data.equipment || 'N/A'}\n\n📝 Please describe the issue in detail:`);
+      }
+      if (flowState.step === 6) {
+        // Step 6: Description
         const desc = text.slice(0, 500);
+        if (desc.length < 10) {
+          return ctx.reply('Description must be at least 10 characters. Please provide more details:');
+        }
+        
         const { user } = await requireActiveMembership(ctx);
         const wo = await prisma.workOrder.create({
           data: {
             facilityId: user.activeFacilityId,
             createdByUserId: user.id,
+            typeOfWork: flowState.data.typeOfWork,
+            typeOfService: flowState.data.typeOfService,
+            priority: flowState.data.priority,
+            location: flowState.data.location,
+            equipment: flowState.data.equipment,
             description: desc,
             status: 'open'
           }
         });
+        
         flows.delete(ctx.from.id);
-        await ctx.reply(`✅ Work order created: #${wo.id.toString()}`);
+        
+        const priorityEmoji = {
+          'high': '🔴',
+          'medium': '🟡',
+          'low': '🟢'
+        };
+        
+        await ctx.reply(
+          `✅ Work Order Created Successfully!\n\n` +
+          `📋 **Work Order #${wo.id.toString()}**\n` +
+          `🔧 Type: ${flowState.data.typeOfWork}\n` +
+          `⚡ Service: ${flowState.data.typeOfService}\n` +
+          `${priorityEmoji[flowState.data.priority]} Priority: ${flowState.data.priority}\n` +
+          `📍 Location: ${flowState.data.location}\n` +
+          `🔧 Equipment: ${flowState.data.equipment || 'N/A'}\n` +
+          `📝 Description: ${desc.slice(0, 100)}${desc.length > 100 ? '...' : ''}\n\n` +
+          `Status: 🔵 Open`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.callback('🏠 Back to Menu', 'back_to_menu')]
+              ]
+            }
+          }
+        );
         return;
       }
     }
@@ -209,6 +302,67 @@ bot.on('text', async (ctx, next) => {
     flows.delete(ctx.from.id);
     return ctx.reply('⚠️ An error occurred. Please try again.');
   }
+});
+
+// Handle work order type selection
+bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const flowState = flows.get(ctx.from.id);
+  if (!flowState || flowState.flow !== 'wo_new') return;
+  
+  flowState.data.typeOfWork = ctx.match[1];
+  flowState.step = 2;
+  flows.set(ctx.from.id, flowState);
+  
+  // Step 2: Choose service type
+  const serviceTypeButtons = [
+    [Markup.button.callback('⚡ Electrical', 'wo_service|electrical')],
+    [Markup.button.callback('🔧 Mechanical', 'wo_service|mechanical')],
+    [Markup.button.callback('🚰 Plumbing', 'wo_service|plumbing')],
+    [Markup.button.callback('❄️ HVAC', 'wo_service|hvac')],
+    [Markup.button.callback('🏗️ Structural', 'wo_service|structural')],
+    [Markup.button.callback('💻 IT/Technology', 'wo_service|it')],
+    [Markup.button.callback('🧹 General', 'wo_service|general')]
+  ];
+  
+  await ctx.reply(`🔧 Work Order Creation (2/6)\nType: ${flowState.data.typeOfWork}\nChoose the service type:`, {
+    reply_markup: { inline_keyboard: serviceTypeButtons }
+  });
+});
+
+// Handle service type selection
+bot.action(/wo_service\|(electrical|mechanical|plumbing|hvac|structural|it|general)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const flowState = flows.get(ctx.from.id);
+  if (!flowState || flowState.flow !== 'wo_new') return;
+  
+  flowState.data.typeOfService = ctx.match[1];
+  flowState.step = 3;
+  flows.set(ctx.from.id, flowState);
+  
+  // Step 3: Choose priority
+  const priorityButtons = [
+    [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
+    [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
+    [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')]
+  ];
+  
+  await ctx.reply(`🔧 Work Order Creation (3/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nChoose priority:`, {
+    reply_markup: { inline_keyboard: priorityButtons }
+  });
+});
+
+// Handle priority selection
+bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const flowState = flows.get(ctx.from.id);
+  if (!flowState || flowState.flow !== 'wo_new') return;
+  
+  flowState.data.priority = ctx.match[1];
+  flowState.step = 4;
+  flows.set(ctx.from.id, flowState);
+  
+  await ctx.reply(`🔧 Work Order Creation (4/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\n\n📍 Enter the location/area (e.g., Building A, Floor 2, Room 101):`);
 });
 
 // Handle plan selection during facility registration
@@ -357,6 +511,12 @@ bot.action(/master_member_approve\|(\d+)/, async (ctx) => {
     });
   });
   await ctx.reply(`✅ Membership request approved for user#${req.userId.toString()}.`);
+});
+
+// Back to menu handler
+bot.action('back_to_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await showMainMenu(ctx);
 });
 
 // Webhook handler for Vercel
