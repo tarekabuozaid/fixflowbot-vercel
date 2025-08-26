@@ -141,20 +141,13 @@ bot.action('wo_list', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
     const { user } = await requireActiveMembership(ctx);
-    const wos = await prisma.workOrder.findMany({
-      where: { facilityId: user.activeFacilityId, createdByUserId: user.id },
-      orderBy: { createdAt: 'desc' },
-      take: 10
-    });
-    if (!wos.length) {
-      return ctx.reply('🔍 No work orders found.');
-    }
     
-    const priorityEmoji = {
-      'high': '🔴',
-      'medium': '🟡',
-      'low': '🟢'
-    };
+    // Get statistics
+    const stats = await prisma.workOrder.groupBy({
+      by: ['status'],
+      where: { facilityId: user.activeFacilityId, createdByUserId: user.id },
+      _count: { status: true }
+    });
     
     const statusEmoji = {
       'open': '🔵',
@@ -163,20 +156,30 @@ bot.action('wo_list', async (ctx) => {
       'closed': '⚫'
     };
     
-    const rows = wos.map(wo => {
-      const priority = priorityEmoji[wo.priority] || '⚪';
-      const status = statusEmoji[wo.status] || '⚪';
-      const type = wo.typeOfWork ? `[${wo.typeOfWork}]` : '';
-      const location = wo.location ? `📍${wo.location}` : '';
-      
-      return [Markup.button.callback(
-        `${status} #${wo.id.toString()} ${priority} ${type}\n${wo.description.slice(0, 40)}${wo.description.length > 40 ? '...' : ''}`,
-        `wo_view|${wo.id.toString()}`
-      )];
-    });
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
     
-    await ctx.reply(`📋 **Your Work Orders** (${wos.length})\n\nClick on any work order to view details:`, {
-      reply_markup: { inline_keyboard: rows }
+    const statsText = stats.map(s => 
+      `${statusEmoji[s.status]} ${statusText[s.status]}: ${s._count.status}`
+    ).join(' | ');
+    
+    const buttons = [
+      [Markup.button.callback('🔍 All Orders', 'wo_filter|all')],
+      [Markup.button.callback('🔵 Open Only', 'wo_filter|open')],
+      [Markup.button.callback('🟡 In Progress', 'wo_filter|in_progress')],
+      [Markup.button.callback('🟢 Done', 'wo_filter|done')],
+      [Markup.button.callback('⚫ Closed', 'wo_filter|closed')],
+      [Markup.button.callback('🔴 High Priority', 'wo_filter|priority_high')],
+      [Markup.button.callback('📊 Facility Orders', 'wo_facility_list')],
+      [Markup.button.callback('📈 Statistics', 'wo_stats')]
+    ];
+    
+    await ctx.reply(`📋 **Work Orders Management**\n\n${statsText}\n\nChoose an option:`, {
+      reply_markup: { inline_keyboard: buttons }
     });
   } catch {
     await ctx.reply('⚠️ You must be an active member of a facility to view work orders.');
@@ -716,6 +719,234 @@ bot.action(/wo_history\|(\d+)/, async (ctx) => {
   } catch (error) {
     console.error('Error viewing status history:', error);
     await ctx.reply('⚠️ An error occurred while viewing the status history.');
+  }
+});
+
+// Work order filtering
+bot.action(/wo_filter\|(all|open|in_progress|done|closed|priority_high)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const filter = ctx.match[1];
+    
+    let whereClause = { facilityId: user.activeFacilityId, createdByUserId: user.id };
+    
+    if (filter === 'priority_high') {
+      whereClause.priority = 'high';
+    } else if (filter !== 'all') {
+      whereClause.status = filter;
+    }
+    
+    const wos = await prisma.workOrder.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      take: 15
+    });
+    
+    if (!wos.length) {
+      const filterText = {
+        'all': 'All',
+        'open': 'Open',
+        'in_progress': 'In Progress',
+        'done': 'Done',
+        'closed': 'Closed',
+        'priority_high': 'High Priority'
+      };
+      return ctx.reply(`🔍 No ${filterText[filter]} work orders found.`);
+    }
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const rows = wos.map(wo => {
+      const priority = priorityEmoji[wo.priority] || '⚪';
+      const status = statusEmoji[wo.status] || '⚪';
+      const type = wo.typeOfWork ? `[${wo.typeOfWork}]` : '';
+      
+      return [Markup.button.callback(
+        `${status} #${wo.id.toString()} ${priority} ${type}\n${wo.description.slice(0, 40)}${wo.description.length > 40 ? '...' : ''}`,
+        `wo_view|${wo.id.toString()}`
+      )];
+    });
+    
+    const filterText = {
+      'all': 'All',
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed',
+      'priority_high': 'High Priority'
+    };
+    
+    const buttons = [
+      ...rows,
+      [Markup.button.callback('🔙 Back to Filters', 'wo_list')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(`📋 **${filterText[filter]} Work Orders** (${wos.length})\n\nClick on any work order to view details:`, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error filtering work orders:', error);
+    await ctx.reply('⚠️ An error occurred while filtering work orders.');
+  }
+});
+
+// Facility work orders (for admins/supervisors)
+bot.action('wo_facility_list', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can view all facility orders.');
+    }
+    
+    const wos = await prisma.workOrder.findMany({
+      where: { facilityId: user.activeFacilityId },
+      orderBy: { createdAt: 'desc' },
+      take: 15,
+      include: { byUser: true }
+    });
+    
+    if (!wos.length) {
+      return ctx.reply('🔍 No work orders found in this facility.');
+    }
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const rows = wos.map(wo => {
+      const priority = priorityEmoji[wo.priority] || '⚪';
+      const status = statusEmoji[wo.status] || '⚪';
+      const type = wo.typeOfWork ? `[${wo.typeOfWork}]` : '';
+      const creator = wo.byUser?.firstName || `User ${wo.byUser?.tgId?.toString() || wo.byUser?.id.toString()}`;
+      
+      return [Markup.button.callback(
+        `${status} #${wo.id.toString()} ${priority} ${type}\n👤 ${creator} • ${wo.description.slice(0, 30)}${wo.description.length > 30 ? '...' : ''}`,
+        `wo_view|${wo.id.toString()}`
+      )];
+    });
+    
+    const buttons = [
+      ...rows,
+      [Markup.button.callback('🔙 Back to Filters', 'wo_list')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(`📊 **All Facility Work Orders** (${wos.length})\n\nClick on any work order to view details:`, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing facility work orders:', error);
+    await ctx.reply('⚠️ An error occurred while viewing facility work orders.');
+  }
+});
+
+// Work order statistics
+bot.action('wo_stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Get detailed statistics
+    const statusStats = await prisma.workOrder.groupBy({
+      by: ['status'],
+      where: { facilityId: user.activeFacilityId, createdByUserId: user.id },
+      _count: { status: true }
+    });
+    
+    const priorityStats = await prisma.workOrder.groupBy({
+      by: ['priority'],
+      where: { facilityId: user.activeFacilityId, createdByUserId: user.id },
+      _count: { priority: true }
+    });
+    
+    const totalOrders = await prisma.workOrder.count({
+      where: { facilityId: user.activeFacilityId, createdByUserId: user.id }
+    });
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const priorityText = {
+      'high': 'High',
+      'medium': 'Medium',
+      'low': 'Low'
+    };
+    
+    const statusSection = statusStats.map(s => 
+      `${statusEmoji[s.status]} ${statusText[s.status]}: ${s._count.status}`
+    ).join('\n');
+    
+    const prioritySection = priorityStats.map(p => 
+      `${priorityEmoji[p.priority]} ${priorityText[p.priority]}: ${p._count.priority}`
+    ).join('\n');
+    
+    const statsMessage = 
+      `📈 **Work Order Statistics**\n\n` +
+      `📊 **Total Orders:** ${totalOrders}\n\n` +
+      `📋 **By Status:**\n${statusSection}\n\n` +
+      `🎯 **By Priority:**\n${prioritySection}`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Filters', 'wo_list')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(statsMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing statistics:', error);
+    await ctx.reply('⚠️ An error occurred while viewing statistics.');
   }
 });
 
