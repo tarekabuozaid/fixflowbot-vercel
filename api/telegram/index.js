@@ -19,7 +19,19 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+    }
+  }
+});
+
+// Global error handler
+bot.catch((err, ctx) => {
+  console.error('Bot error:', err);
+  ctx.reply('⚠️ An error occurred. Please try again.').catch(() => {});
+});
 
 // In-memory flow state per user
 // Each entry: { flow: string, step: number|string, data: object }
@@ -347,25 +359,12 @@ bot.action(/master_member_approve\|(\d+)/, async (ctx) => {
   await ctx.reply(`✅ Membership request approved for user#${req.userId.toString()}.`);
 });
 
-// Start polling if not in serverless environment
-bot.launch().then(() => {
-  console.log('FixFlowBot started');
-});
-
-// Graceful shutdown
-process.once('SIGINT', () => {
-  bot.stop('SIGINT');
-  prisma.$disconnect();
-});
-process.once('SIGTERM', () => {
-  bot.stop('SIGTERM');
-  prisma.$disconnect();
-});
-
 // Webhook handler for Vercel
 module.exports = async (req, res) => {
   if (req.method === 'POST') {
     try {
+      console.log('Received webhook:', req.body);
+      
       res.setTimeout(25000, () => {
         console.log('Request timeout');
         res.status(408).json({ error: 'Request timeout' });
