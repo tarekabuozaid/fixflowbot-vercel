@@ -70,6 +70,14 @@ async function showMainMenu(ctx) {
     if (membership) {
       buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
     }
+    
+    // Add notifications button
+    const unreadCount = await prisma.notification.count({
+      where: { userId: user.id, isRead: false }
+    });
+    
+    const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
+    buttons.push([Markup.button.callback(notificationText, 'notifications')]);
   } else {
     buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
     buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
@@ -273,19 +281,53 @@ bot.on('text', async (ctx, next) => {
         }
         
         const { user } = await requireActiveMembership(ctx);
-        const wo = await prisma.workOrder.create({
-          data: {
-            facilityId: user.activeFacilityId,
-            createdByUserId: user.id,
-            typeOfWork: flowState.data.typeOfWork,
-            typeOfService: flowState.data.typeOfService,
-            priority: flowState.data.priority,
-            location: flowState.data.location,
-            equipment: flowState.data.equipment,
-            description: desc,
-            status: 'open'
-          }
-        });
+                 const wo = await prisma.workOrder.create({
+           data: {
+             facilityId: user.activeFacilityId,
+             createdByUserId: user.id,
+             typeOfWork: flowState.data.typeOfWork,
+             typeOfService: flowState.data.typeOfService,
+             priority: flowState.data.priority,
+             location: flowState.data.location,
+             equipment: flowState.data.equipment,
+             description: desc,
+             status: 'open'
+           }
+         });
+         
+         // Create notification for work order creation
+         await createNotification(
+           user.id,
+           user.activeFacilityId,
+           'work_order_created',
+           'New Work Order Created',
+           `Work Order #${wo.id.toString()} has been created.\nType: ${flowState.data.typeOfWork}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}`,
+           { workOrderId: wo.id.toString() }
+         );
+         
+         // Send high priority alert to admins/supervisors
+         if (flowState.data.priority === 'high') {
+           const admins = await prisma.facilityMember.findMany({
+             where: {
+               facilityId: user.activeFacilityId,
+               role: { in: ['facility_admin', 'supervisor'] }
+             },
+             include: { user: true }
+           });
+           
+           for (const admin of admins) {
+             if (admin.userId !== user.id) {
+               await createNotification(
+                 admin.userId,
+                 user.activeFacilityId,
+                 'high_priority_alert',
+                 'High Priority Work Order',
+                 `🚨 High priority work order #${wo.id.toString()} created by ${user.firstName || 'User'}.\nType: ${flowState.data.typeOfWork}\nLocation: ${flowState.data.location}`,
+                 { workOrderId: wo.id.toString() }
+               );
+             }
+           }
+         }
         
         flows.delete(ctx.from.id);
         
@@ -631,24 +673,56 @@ bot.action(/wo_status\|(\d+)\|(open|in_progress|done|closed)/, async (ctx) => {
     
     const oldStatus = wo.status;
     
-    // Update work order status
-    await prisma.$transaction(async (tx) => {
-      // Update work order
-      await tx.workOrder.update({
-        where: { id: woId },
-        data: { status: newStatus }
-      });
-      
-      // Add status history
-      await tx.statusHistory.create({
-        data: {
-          workOrderId: woId,
-          oldStatus: oldStatus,
-          newStatus: newStatus,
-          updatedByUserId: user.id
-        }
-      });
-    });
+         // Update work order status
+     await prisma.$transaction(async (tx) => {
+       // Update work order
+       await tx.workOrder.update({
+         where: { id: woId },
+         data: { status: newStatus }
+       });
+       
+       // Add status history
+       await tx.statusHistory.create({
+         data: {
+           workOrderId: woId,
+           oldStatus: oldStatus,
+           newStatus: newStatus,
+           updatedByUserId: user.id
+         }
+       });
+     });
+     
+     // Create notification for status change
+     await createNotification(
+       user.id,
+       user.activeFacilityId,
+       'work_order_status_changed',
+       'Work Order Status Updated',
+       `Work Order #${woId.toString()} status changed from ${statusText[oldStatus]} to ${statusText[newStatus]}`,
+       { workOrderId: woId.toString(), oldStatus, newStatus }
+     );
+     
+     // Notify facility admins/supervisors about status changes
+     const admins = await prisma.facilityMember.findMany({
+       where: {
+         facilityId: user.activeFacilityId,
+         role: { in: ['facility_admin', 'supervisor'] }
+       },
+       include: { user: true }
+     });
+     
+     for (const admin of admins) {
+       if (admin.userId !== user.id) {
+         await createNotification(
+           admin.userId,
+           user.activeFacilityId,
+           'work_order_status_changed',
+           'Work Order Status Update',
+           `Work Order #${woId.toString()} status changed from ${statusText[oldStatus]} to ${statusText[newStatus]} by ${user.firstName || 'User'}`,
+           { workOrderId: woId.toString(), oldStatus, newStatus, updatedBy: user.id }
+         );
+       }
+     }
     
     const statusText = {
       'open': 'Open',
@@ -1486,6 +1560,408 @@ bot.action('facility_settings', async (ctx) => {
     });
   } catch (error) {
     console.error('Error accessing facility settings:', error);
+    await ctx.reply('⚠️ An error occurred while accessing settings.');
+  }
+});
+
+// === Notification System ===
+// Helper function to create notifications
+async function createNotification(userId, facilityId, type, title, message, data = null) {
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: BigInt(userId),
+        facilityId: facilityId ? BigInt(facilityId) : null,
+        type,
+        title,
+        message,
+        data: data ? JSON.parse(JSON.stringify(data)) : null
+      }
+    });
+  } catch (error) {
+    console.error('Error creating notification:', error);
+  }
+}
+
+// Helper function to send notification to user via Telegram
+async function sendTelegramNotification(userId, title, message, buttons = null) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: BigInt(userId) }
+    });
+    
+    if (user?.tgId) {
+      const options = buttons ? { reply_markup: { inline_keyboard: buttons } } : {};
+      await bot.telegram.sendMessage(user.tgId.toString(), `${title}\n\n${message}`, options);
+    }
+  } catch (error) {
+    console.error('Error sending Telegram notification:', error);
+  }
+}
+
+// Notifications menu
+bot.action('notifications', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const notifications = await prisma.notification.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    });
+    
+    if (!notifications.length) {
+      return ctx.reply('🔔 No notifications found.');
+    }
+    
+    const notificationButtons = notifications.map(notification => {
+      const isRead = notification.isRead ? '✅' : '🔔';
+      const date = notification.createdAt.toLocaleDateString();
+      const shortTitle = notification.title.length > 30 ? 
+        notification.title.slice(0, 30) + '...' : notification.title;
+      
+      return [Markup.button.callback(
+        `${isRead} ${shortTitle} (${date})`,
+        `notification_view|${notification.id.toString()}`
+      )];
+    });
+    
+    const buttons = [
+      ...notificationButtons,
+      [Markup.button.callback('📊 Reports', 'reports_menu')],
+      [Markup.button.callback('⚙️ Notification Settings', 'notification_settings')],
+      [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+    ];
+    
+    const unreadCount = await prisma.notification.count({
+      where: { userId: user.id, isRead: false }
+    });
+    
+    await ctx.reply(`🔔 **Notifications** (${unreadCount} unread)\n\nClick on any notification to view details:`, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error accessing notifications:', error);
+    await ctx.reply('⚠️ An error occurred while accessing notifications.');
+  }
+});
+
+// View notification details
+bot.action(/notification_view\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const notificationId = BigInt(ctx.match[1]);
+    
+    const notification = await prisma.notification.findFirst({
+      where: { 
+        id: notificationId,
+        userId: user.id
+      }
+    });
+    
+    if (!notification) {
+      return ctx.reply('⚠️ Notification not found.');
+    }
+    
+    // Mark as read
+    if (!notification.isRead) {
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: { isRead: true }
+      });
+    }
+    
+    const date = notification.createdAt.toLocaleDateString() + ' ' + notification.createdAt.toLocaleTimeString();
+    const typeEmoji = {
+      'work_order_created': '📋',
+      'work_order_status_changed': '🔄',
+      'work_order_assigned': '👤',
+      'member_joined': '👥',
+      'member_left': '👋',
+      'facility_activated': '✅',
+      'high_priority_alert': '🚨',
+      'daily_summary': '📊',
+      'weekly_report': '📈',
+      'system_alert': '⚠️'
+    };
+    
+    const notificationDetails = 
+      `${typeEmoji[notification.type] || '🔔'} **${notification.title}**\n\n` +
+      `${notification.message}\n\n` +
+      `📅 **Date:** ${date}\n` +
+      `📋 **Type:** ${notification.type.replace(/_/g, ' ').toUpperCase()}`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(notificationDetails, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing notification:', error);
+    await ctx.reply('⚠️ An error occurred while viewing notification.');
+  }
+});
+
+// Reports menu
+bot.action('reports_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access reports.');
+    }
+    
+    const buttons = [
+      [Markup.button.callback('📊 Daily Summary', 'report_daily')],
+      [Markup.button.callback('📈 Weekly Report', 'report_weekly')],
+      [Markup.button.callback('📋 Work Order Analysis', 'report_work_orders')],
+      [Markup.button.callback('👥 Member Activity', 'report_members')],
+      [Markup.button.callback('🎯 Priority Analysis', 'report_priorities')],
+      [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply('📊 **Reports & Analytics**\n\nChoose a report type:', {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error accessing reports:', error);
+    await ctx.reply('⚠️ An error occurred while accessing reports.');
+  }
+});
+
+// Daily summary report
+bot.action('report_daily', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access reports.');
+    }
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Get today's statistics
+    const newWorkOrders = await prisma.workOrder.count({
+      where: {
+        facilityId: user.activeFacilityId,
+        createdAt: { gte: today, lt: tomorrow }
+      }
+    });
+    
+    const completedWorkOrders = await prisma.workOrder.count({
+      where: {
+        facilityId: user.activeFacilityId,
+        status: { in: ['done', 'closed'] },
+        updatedAt: { gte: today, lt: tomorrow }
+      }
+    });
+    
+    const highPriorityOrders = await prisma.workOrder.count({
+      where: {
+        facilityId: user.activeFacilityId,
+        priority: 'high',
+        createdAt: { gte: today, lt: tomorrow }
+      }
+    });
+    
+    const activeMembers = await prisma.facilityMember.count({
+      where: { facilityId: user.activeFacilityId }
+    });
+    
+    const statusStats = await prisma.workOrder.groupBy({
+      by: ['status'],
+      where: { facilityId: user.activeFacilityId },
+      _count: { status: true }
+    });
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const statusSection = statusStats.map(s => 
+      `${statusEmoji[s.status]} ${statusText[s.status]}: ${s._count.status}`
+    ).join('\n');
+    
+    const reportMessage = 
+      `📊 **Daily Summary Report**\n` +
+      `📅 ${today.toLocaleDateString()}\n\n` +
+      `📋 **Today's Activity:**\n` +
+      `➕ New Work Orders: ${newWorkOrders}\n` +
+      `✅ Completed Orders: ${completedWorkOrders}\n` +
+      `🚨 High Priority: ${highPriorityOrders}\n` +
+      `👥 Active Members: ${activeMembers}\n\n` +
+      `📊 **Current Status Distribution:**\n${statusSection}`;
+    
+    const buttons = [
+      [Markup.button.callback('📈 Weekly Report', 'report_weekly')],
+      [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(reportMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error generating daily report:', error);
+    await ctx.reply('⚠️ An error occurred while generating the report.');
+  }
+});
+
+// Weekly report
+bot.action('report_weekly', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is facility admin or supervisor
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ Only facility admins and supervisors can access reports.');
+    }
+    
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    
+    // Get weekly statistics
+    const weeklyWorkOrders = await prisma.workOrder.count({
+      where: {
+        facilityId: user.activeFacilityId,
+        createdAt: { gte: weekAgo }
+      }
+    });
+    
+    const weeklyCompleted = await prisma.workOrder.count({
+      where: {
+        facilityId: user.activeFacilityId,
+        status: { in: ['done', 'closed'] },
+        updatedAt: { gte: weekAgo }
+      }
+    });
+    
+    const completionRate = weeklyWorkOrders > 0 ? 
+      Math.round((weeklyCompleted / weeklyWorkOrders) * 100) : 0;
+    
+    const priorityStats = await prisma.workOrder.groupBy({
+      by: ['priority'],
+      where: {
+        facilityId: user.activeFacilityId,
+        createdAt: { gte: weekAgo }
+      },
+      _count: { priority: true }
+    });
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const priorityText = {
+      'high': 'High',
+      'medium': 'Medium',
+      'low': 'Low'
+    };
+    
+    const prioritySection = priorityStats.map(p => 
+      `${priorityEmoji[p.priority]} ${priorityText[p.priority]}: ${p._count.priority}`
+    ).join('\n');
+    
+    const reportMessage = 
+      `📈 **Weekly Report**\n` +
+      `📅 Last 7 Days\n\n` +
+      `📊 **Weekly Statistics:**\n` +
+      `📋 Total Work Orders: ${weeklyWorkOrders}\n` +
+      `✅ Completed: ${weeklyCompleted}\n` +
+      `📈 Completion Rate: ${completionRate}%\n\n` +
+      `🎯 **Priority Distribution:**\n${prioritySection}`;
+    
+    const buttons = [
+      [Markup.button.callback('📊 Daily Summary', 'report_daily')],
+      [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(reportMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error generating weekly report:', error);
+    await ctx.reply('⚠️ An error occurred while generating the report.');
+  }
+});
+
+// Notification settings
+bot.action('notification_settings', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const settingsMessage = 
+      `⚙️ **Notification Settings**\n\n` +
+      `🔔 **Current Settings:**\n` +
+      `✅ Work Order Updates\n` +
+      `✅ Status Changes\n` +
+      `✅ High Priority Alerts\n` +
+      `✅ Daily Summaries\n` +
+      `✅ Weekly Reports\n\n` +
+      `Settings customization coming soon...`;
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(settingsMessage, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error accessing notification settings:', error);
     await ctx.reply('⚠️ An error occurred while accessing settings.');
   }
 });

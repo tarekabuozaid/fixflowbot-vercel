@@ -21,6 +21,7 @@ model User {
   memberships      FacilityMember[]
   switchRequests   FacilitySwitchRequest[]
   statusUpdates    StatusHistory[]
+  notifications    Notification[]
   activeFacility   Facility?        @relation(fields: [activeFacilityId], references: [id])
   workOrders       WorkOrder[]      @relation("WO_ByUser")
 
@@ -28,17 +29,19 @@ model User {
 }
 
 model Facility {
-  id         BigInt       @id @default(autoincrement())
-  name       String       @unique
-  city       String?
-  phone      String?
-  isDefault  Boolean      @default(false)
-  isActive   Boolean      @default(false)
-  planTier   PlanTier     @default(Free)
-  createdAt  DateTime     @default(now())
-  members    FacilityMember[]
-  User       User[]
-  workOrders WorkOrder[]
+  id            BigInt          @id @default(autoincrement())
+  name          String          @unique
+  city          String?
+  phone         String?
+  isDefault     Boolean         @default(false)
+  isActive      Boolean         @default(false)
+  planTier      PlanTier        @default(Free)
+  createdAt     DateTime        @default(now())
+  members       FacilityMember[]
+  User          User[]
+  workOrders    WorkOrder[]
+  notifications Notification[]
+  reports       Report[]
 }
 
 model FacilityMember {
@@ -106,6 +109,35 @@ model FacilitySwitchRequest {
   user           User          @relation(fields: [userId], references: [id])
 }
 
+model Notification {
+  id          BigInt           @id @default(autoincrement())
+  userId      BigInt
+  facilityId  BigInt?
+  type        NotificationType
+  title       String
+  message     String
+  data        Json?
+  isRead      Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  user        User             @relation(fields: [userId], references: [id])
+  facility    Facility?        @relation(fields: [facilityId], references: [id])
+
+  @@index([userId, isRead, createdAt])
+  @@index([facilityId, type, createdAt])
+}
+
+model Report {
+  id          BigInt      @id @default(autoincrement())
+  facilityId  BigInt
+  type        ReportType
+  period      String      // daily, weekly, monthly
+  data        Json
+  createdAt   DateTime    @default(now())
+  facility    Facility    @relation(fields: [facilityId], references: [id])
+
+  @@index([facilityId, type, period, createdAt])
+}
+
 enum Role {
   facility_admin
   supervisor
@@ -136,4 +168,25 @@ enum PlanTier {
   Free
   Pro
   Business
+}
+
+enum NotificationType {
+  work_order_created
+  work_order_status_changed
+  work_order_assigned
+  member_joined
+  member_left
+  facility_activated
+  high_priority_alert
+  daily_summary
+  weekly_report
+  system_alert
+}
+
+enum ReportType {
+  work_order_summary
+  member_activity
+  facility_performance
+  priority_analysis
+  status_distribution
 }
