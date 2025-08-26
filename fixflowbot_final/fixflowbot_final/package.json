@@ -1,0 +1,25 @@
+{
+  "name": "fixflowbot-final",
+  "version": "1.0.0",
+  "description": "Improved FixFlowBot with facility management and work orders",
+  "type": "commonjs",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "node index.js",
+    "build": "prisma generate",
+    "start": "node index.js",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "prisma": "^5.10.0"
+  }
+}

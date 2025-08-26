@@ -58,25 +58,14 @@ model WorkOrder {
   facilityId      BigInt
   createdByUserId BigInt?
   status          WorkOrderStatus @default(open)
-  typeOfWork      String?
-  typeOfService   String?
-  priority        String?
-  location        String?
   department      String?
-  equipment       String?
+  priority        String?
   description     String
-  notes           String?
-  callerPhone     String?
   createdAt       DateTime        @default(now())
-  imageUrl        String?
-  closeImageUrl   String?
-  maintenanceType String?
-  groupName       String?
-  assignee        String?
   updatedAt       DateTime        @updatedAt
-  statusHistory   StatusHistory[]
   byUser          User?           @relation("WO_ByUser", fields: [createdByUserId], references: [id])
   facility        Facility        @relation(fields: [facilityId], references: [id])
+  statusHistory   StatusHistory[]
 
   @@index([facilityId, status, updatedAt])
   @@index([createdByUserId])

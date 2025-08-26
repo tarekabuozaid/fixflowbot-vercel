@@ -7,7 +7,14 @@ async function main() {
   const facility = await prisma.facility.upsert({
     where: { name: 'Default Facility' },
     update: { isActive: true, isDefault: true, planTier: 'Free' },
-    create: { name: 'Default Facility', isActive: true, isDefault: true, planTier: 'Free' },
+    create: { 
+      name: 'Default Facility', 
+      city: 'N/A',
+      phone: '',
+      isActive: true, 
+      isDefault: true, 
+      planTier: 'Free' 
+    },
   });
 
   // ⬅️ غيّر القيمة دي لتليجرام ID بتاعك (رقم فقط)
