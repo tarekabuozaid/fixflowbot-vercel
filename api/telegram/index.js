@@ -163,18 +163,21 @@ bot.action('wo_list', async (ctx) => {
       'closed': '⚫'
     };
     
-    const lines = wos.map(wo => {
+    const rows = wos.map(wo => {
       const priority = priorityEmoji[wo.priority] || '⚪';
       const status = statusEmoji[wo.status] || '⚪';
       const type = wo.typeOfWork ? `[${wo.typeOfWork}]` : '';
       const location = wo.location ? `📍${wo.location}` : '';
       
-      return `${status} **#${wo.id.toString()}** ${priority} ${type}\n` +
-             `📝 ${wo.description.slice(0, 60)}${wo.description.length > 60 ? '...' : ''}\n` +
-             `${location} • ${wo.createdAt.toLocaleDateString()}`;
+      return [Markup.button.callback(
+        `${status} #${wo.id.toString()} ${priority} ${type}\n${wo.description.slice(0, 40)}${wo.description.length > 40 ? '...' : ''}`,
+        `wo_view|${wo.id.toString()}`
+      )];
     });
     
-    await ctx.reply(`📋 **Your Work Orders** (${wos.length})\n\n${lines.join('\n\n')}`);
+    await ctx.reply(`📋 **Your Work Orders** (${wos.length})\n\nClick on any work order to view details:`, {
+      reply_markup: { inline_keyboard: rows }
+    });
   } catch {
     await ctx.reply('⚠️ You must be an active member of a facility to view work orders.');
   }
@@ -511,6 +514,209 @@ bot.action(/master_member_approve\|(\d+)/, async (ctx) => {
     });
   });
   await ctx.reply(`✅ Membership request approved for user#${req.userId.toString()}.`);
+});
+
+// View work order details
+bot.action(/wo_view\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const woId = BigInt(ctx.match[1]);
+    
+    const wo = await prisma.workOrder.findFirst({
+      where: { 
+        id: woId, 
+        facilityId: user.activeFacilityId,
+        createdByUserId: user.id 
+      }
+    });
+    
+    if (!wo) {
+      return ctx.reply('⚠️ Work order not found.');
+    }
+    
+    const priorityEmoji = {
+      'high': '🔴',
+      'medium': '🟡',
+      'low': '🟢'
+    };
+    
+    const statusEmoji = {
+      'open': '🔵',
+      'in_progress': '🟡',
+      'done': '🟢',
+      'closed': '⚫'
+    };
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const details = 
+      `📋 **Work Order #${wo.id.toString()}**\n\n` +
+      `${statusEmoji[wo.status]} **Status:** ${statusText[wo.status]}\n` +
+      `${priorityEmoji[wo.priority] || '⚪'} **Priority:** ${wo.priority || 'Not set'}\n` +
+      `🔧 **Type:** ${wo.typeOfWork || 'Not set'}\n` +
+      `⚡ **Service:** ${wo.typeOfService || 'Not set'}\n` +
+      `📍 **Location:** ${wo.location || 'Not set'}\n` +
+      `🔧 **Equipment:** ${wo.equipment || 'Not set'}\n` +
+      `📝 **Description:** ${wo.description}\n\n` +
+      `📅 **Created:** ${wo.createdAt.toLocaleDateString()}\n` +
+      `🕒 **Updated:** ${wo.updatedAt.toLocaleDateString()}`;
+    
+    // Create status change buttons based on current status
+    const statusButtons = [];
+    if (wo.status === 'open') {
+      statusButtons.push([Markup.button.callback('🟡 Start Work', `wo_status|${wo.id.toString()}|in_progress`)]);
+    } else if (wo.status === 'in_progress') {
+      statusButtons.push([Markup.button.callback('🟢 Mark Done', `wo_status|${wo.id.toString()}|done`)]);
+    } else if (wo.status === 'done') {
+      statusButtons.push([Markup.button.callback('⚫ Close', `wo_status|${wo.id.toString()}|closed`)]);
+    }
+    
+    const buttons = [
+      ...statusButtons,
+      [Markup.button.callback('📊 Status History', `wo_history|${wo.id.toString()}`)],
+      [Markup.button.callback('📋 Back to List', 'wo_list')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(details, {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing work order:', error);
+    await ctx.reply('⚠️ An error occurred while viewing the work order.');
+  }
+});
+
+// Change work order status
+bot.action(/wo_status\|(\d+)\|(open|in_progress|done|closed)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const woId = BigInt(ctx.match[1]);
+    const newStatus = ctx.match[2];
+    
+    const wo = await prisma.workOrder.findFirst({
+      where: { 
+        id: woId, 
+        facilityId: user.activeFacilityId,
+        createdByUserId: user.id 
+      }
+    });
+    
+    if (!wo) {
+      return ctx.reply('⚠️ Work order not found.');
+    }
+    
+    const oldStatus = wo.status;
+    
+    // Update work order status
+    await prisma.$transaction(async (tx) => {
+      // Update work order
+      await tx.workOrder.update({
+        where: { id: woId },
+        data: { status: newStatus }
+      });
+      
+      // Add status history
+      await tx.statusHistory.create({
+        data: {
+          workOrderId: woId,
+          oldStatus: oldStatus,
+          newStatus: newStatus,
+          updatedByUserId: user.id
+        }
+      });
+    });
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    await ctx.reply(`✅ Work Order #${woId.toString()} status changed from **${statusText[oldStatus]}** to **${statusText[newStatus]}**`);
+    
+    // Refresh the work order view
+    setTimeout(async () => {
+      try {
+        await ctx.deleteMessage();
+        const event = { ...ctx, match: [null, woId.toString()] };
+        await bot.action(`wo_view|${woId.toString()}`, event);
+      } catch (e) {
+        console.error('Error refreshing view:', e);
+      }
+    }, 2000);
+    
+  } catch (error) {
+    console.error('Error changing work order status:', error);
+    await ctx.reply('⚠️ An error occurred while changing the status.');
+  }
+});
+
+// View work order status history
+bot.action(/wo_history\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const woId = BigInt(ctx.match[1]);
+    
+    const wo = await prisma.workOrder.findFirst({
+      where: { 
+        id: woId, 
+        facilityId: user.activeFacilityId,
+        createdByUserId: user.id 
+      }
+    });
+    
+    if (!wo) {
+      return ctx.reply('⚠️ Work order not found.');
+    }
+    
+    const history = await prisma.statusHistory.findMany({
+      where: { workOrderId: woId },
+      orderBy: { createdAt: 'desc' },
+      include: { updatedByUser: true }
+    });
+    
+    if (!history.length) {
+      return ctx.reply('📊 **Status History**\n\nNo status changes recorded yet.');
+    }
+    
+    const statusText = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'done': 'Done',
+      'closed': 'Closed'
+    };
+    
+    const historyText = history.map(h => {
+      const date = h.createdAt.toLocaleDateString() + ' ' + h.createdAt.toLocaleTimeString();
+      const user = h.updatedByUser.firstName || `User ${h.updatedByUser.tgId?.toString() || h.updatedByUser.id.toString()}`;
+      return `🔄 **${statusText[h.oldStatus]}** → **${statusText[h.newStatus]}**\n👤 ${user} • 📅 ${date}`;
+    }).join('\n\n');
+    
+    await ctx.reply(
+      `📊 **Status History**\nWork Order #${woId.toString()}\n\n${historyText}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('📋 Back to Work Order', `wo_view|${woId.toString()}`)],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error viewing status history:', error);
+    await ctx.reply('⚠️ An error occurred while viewing the status history.');
+  }
 });
 
 // Back to menu handler
