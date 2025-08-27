@@ -15,7 +15,8 @@
     "seed": "node scripts/seed.js",
     "test": "node scripts/test-bot.js",
     "import": "node scripts/import-xlsx.js",
-    "verify": "node scripts/verify-import.js"
+    "verify": "node scripts/verify-import.js",
+    "webhook:set": "node scripts/set-webhook.js"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
