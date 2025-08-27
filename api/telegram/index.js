@@ -33,6 +33,17 @@ bot.catch((err, ctx) => {
   ctx.reply('⚠️ An error occurred. Please try again.').catch(() => {});
 });
 
+// Start command handler
+bot.command('start', async (ctx) => {
+  try {
+    console.log('✅ Start command received from:', ctx.from.id);
+    await showMainMenu(ctx);
+  } catch (error) {
+    console.error('Error in start command:', error);
+    await ctx.reply('⚠️ An error occurred while starting the bot. Please try again.');
+  }
+});
+
 // In-memory flow state per user
 // Each entry: { flow: string, step: number|string, data: object }
 const flows = new Map();
@@ -41,6 +52,17 @@ const flows = new Map();
 const isMaster = (ctx) => String(ctx.from?.id || '') === String(MASTER_ID);
 
 async function ensureUser(ctx) {
+  const tgId = BigInt(ctx.from.id);
+  let user = await prisma.user.findUnique({ where: { tgId } });
+  if (!user) {
+    user = await prisma.user.create({
+      data: { tgId, firstName: ctx.from.first_name ?? null, status: 'pending' }
+    });
+  }
+  return user;
+}
+
+async function getUser(ctx) {
   const tgId = BigInt(ctx.from.id);
   let user = await prisma.user.findUnique({ where: { tgId } });
   if (!user) {
@@ -72,7 +94,7 @@ async function showMainMenu(ctx) {
       buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
       
       // Add role management for facility admins
-      if (member && member.role === 'facility_admin') {
+      if (membership && membership.role === 'facility_admin') {
         buttons.push([Markup.button.callback('👥 Manage Members', 'manage_members')]);
         buttons.push([Markup.button.callback('🔐 Role Management', 'role_management')]);
       }

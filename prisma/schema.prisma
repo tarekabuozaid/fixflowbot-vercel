@@ -11,10 +11,9 @@ model User {
   id               BigInt          @id @default(autoincrement())
   tgId             BigInt?         @unique
   firstName        String?
-  username         String?
+  email            String?
   phone            String?
   status           UserStatus      @default(pending)
-  requestedRole    Role?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   activeFacilityId BigInt?
@@ -36,6 +35,7 @@ model Facility {
   phone         String?
   isDefault     Boolean         @default(false)
   isActive      Boolean         @default(false)
+  status        String          @default("active")
   planTier      PlanTier        @default(Free)
   createdAt     DateTime        @default(now())
   members       FacilityMember[]
@@ -44,6 +44,7 @@ model Facility {
   notifications Notification[]
   reports       Report[]
   reminders     Reminder[]
+  switchRequests FacilitySwitchRequest[]
 }
 
 model FacilityMember {
@@ -51,6 +52,8 @@ model FacilityMember {
   userId     BigInt
   facilityId BigInt
   role       Role     @default(user)
+  status     String   @default("active")
+  joinedAt   DateTime @default(now())
   facility   Facility @relation(fields: [facilityId], references: [id])
   user       User     @relation(fields: [userId], references: [id])
 
@@ -103,12 +106,14 @@ model StatusHistory {
 model FacilitySwitchRequest {
   id             BigInt        @id @default(autoincrement())
   userId         BigInt
-  fromFacilityId BigInt?
-  toFacilityId   BigInt
+  facilityId     BigInt
+  requestedRole  Role          @default(user)
   status         RequestStatus @default(pending)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  requestDate    DateTime      @default(now())
+  approvedAt     DateTime?
+  approvedBy     BigInt?
   user           User          @relation(fields: [userId], references: [id])
+  facility       Facility      @relation(fields: [facilityId], references: [id])
 }
 
 model Notification {
@@ -204,6 +209,9 @@ enum NotificationType {
   daily_summary
   weekly_report
   system_alert
+  new_member_request
+  membership_approved
+  role_changed
 }
 
 enum ReportType {
