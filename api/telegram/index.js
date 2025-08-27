@@ -70,6 +70,12 @@ async function showMainMenu(ctx) {
     if (membership) {
       buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
       buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
+      
+      // Add role management for facility admins
+      if (member && member.role === 'facility_admin') {
+        buttons.push([Markup.button.callback('👥 Manage Members', 'manage_members')]);
+        buttons.push([Markup.button.callback('🔐 Role Management', 'role_management')]);
+      }
     }
     
     // Add user registration options
@@ -4505,6 +4511,266 @@ bot.action('register_supervisor', async (ctx) => {
   } catch (error) {
     console.error('Error starting supervisor registration:', error);
     await ctx.reply('⚠️ An error occurred while starting registration.');
+  }
+});
+
+// === Member Management System ===
+bot.action('manage_members', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+    
+    if (!member || member.role !== 'facility_admin') {
+      return ctx.reply('⚠️ Only facility admins can manage members.');
+    }
+    
+    const facilityMembers = await prisma.facilityMember.findMany({
+      where: { facilityId: user.activeFacilityId },
+      include: { user: true },
+      orderBy: { joinedAt: 'desc' }
+    });
+    
+    if (!facilityMembers.length) {
+      return ctx.reply('👥 No members found in this facility.');
+    }
+    
+    let membersList = '👥 **Facility Members**\n\n';
+    
+    facilityMembers.forEach((member, index) => {
+      const roleEmoji = {
+        'facility_admin': '👑',
+        'supervisor': '👨‍💼',
+        'technician': '🔧',
+        'user': '👤'
+      };
+      
+      const statusEmoji = member.status === 'active' ? '✅' : '⏳';
+      
+      membersList += `${index + 1}. ${roleEmoji[member.role]} **${member.user.firstName || `User ${member.user.id}`}**\n`;
+      membersList += `   ${statusEmoji} ${member.role.replace('_', ' ').toUpperCase()}\n`;
+      membersList += `   📅 Joined: ${member.joinedAt.toLocaleDateString()}\n\n`;
+    });
+    
+    const buttons = [
+      [Markup.button.callback('➕ Add Member', 'add_member')],
+      [Markup.button.callback('🔐 Change Roles', 'change_roles')],
+      [Markup.button.callback('❌ Remove Member', 'remove_member')],
+      [Markup.button.callback('📊 Member Stats', 'member_stats')],
+      [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(membersList, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in member management:', error);
+    await ctx.reply('⚠️ An error occurred while loading member management.');
+  }
+});
+
+// Role Management
+bot.action('role_management', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+    
+    if (!member || member.role !== 'facility_admin') {
+      return ctx.reply('⚠️ Only facility admins can manage roles.');
+    }
+    
+    const roleInfo = 
+      `🔐 **Role Management**\n\n` +
+      `**Available Roles:**\n` +
+      `👑 **Facility Admin**\n` +
+      `• Full facility management\n` +
+      `• Member management\n` +
+      `• Role assignments\n` +
+      `• System configuration\n\n` +
+      `👨‍💼 **Supervisor**\n` +
+      `• Work order management\n` +
+      `• Reports and analytics\n` +
+      `• Team oversight\n` +
+      `• Cannot manage members\n\n` +
+      `🔧 **Technician**\n` +
+      `• Execute work orders\n` +
+      `• Update task status\n` +
+      `• View assigned tasks\n` +
+      `• Submit reports\n\n` +
+      `👤 **User**\n` +
+      `• Submit maintenance requests\n` +
+      `• View own requests\n` +
+      `• Receive notifications\n` +
+      `• Basic access only`;
+    
+    const buttons = [
+      [Markup.button.callback('👥 Manage Members', 'manage_members')],
+      [Markup.button.callback('🔐 Change Roles', 'change_roles')],
+      [Markup.button.callback('📊 Role Statistics', 'role_stats')],
+      [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(roleInfo, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in role management:', error);
+    await ctx.reply('⚠️ An error occurred while loading role management.');
+  }
+});
+
+// Change Roles
+bot.action('change_roles', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+    
+    if (!member || member.role !== 'facility_admin') {
+      return ctx.reply('⚠️ Only facility admins can change roles.');
+    }
+    
+    const facilityMembers = await prisma.facilityMember.findMany({
+      where: { 
+        facilityId: user.activeFacilityId,
+        role: { not: 'facility_admin' } // Cannot change admin roles
+      },
+      include: { user: true },
+      orderBy: { joinedAt: 'desc' }
+    });
+    
+    if (!facilityMembers.length) {
+      return ctx.reply('👥 No members available for role changes.');
+    }
+    
+    const buttons = facilityMembers.map(member => [
+      Markup.button.callback(
+        `${member.user.firstName || `User ${member.user.id}`} (${member.role})`,
+        `change_role|${member.userId}|${member.role}`
+      )
+    ]);
+    
+    buttons.push([Markup.button.callback('🔙 Back to Management', 'manage_members')]);
+    
+    await ctx.reply('🔐 **Change Member Role**\n\nSelect a member to change their role:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in change roles:', error);
+    await ctx.reply('⚠️ An error occurred while loading role changes.');
+  }
+});
+
+// Change specific member role
+bot.action(/change_role\|(\d+)\|(\w+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const userId = BigInt(ctx.match[1]);
+    const currentRole = ctx.match[2];
+    const { user, member } = await requireActiveMembership(ctx);
+    
+    if (!member || member.role !== 'facility_admin') {
+      return ctx.reply('⚠️ Only facility admins can change roles.');
+    }
+    
+    const targetMember = await prisma.facilityMember.findFirst({
+      where: { 
+        userId,
+        facilityId: user.activeFacilityId
+      },
+      include: { user: true }
+    });
+    
+    if (!targetMember) {
+      return ctx.reply('⚠️ Member not found.');
+    }
+    
+    const availableRoles = ['user', 'technician', 'supervisor'];
+    const buttons = availableRoles.map(role => [
+      Markup.button.callback(
+        `${role === currentRole ? '✅ ' : ''}${role.toUpperCase()}`,
+        `set_role|${userId}|${role}`
+      )
+    ]);
+    
+    buttons.push([Markup.button.callback('🔙 Back', 'change_roles')]);
+    
+    await ctx.reply(
+      `🔐 **Change Role for ${targetMember.user.firstName || `User ${targetMember.user.id}`}**\n\n` +
+      `Current Role: **${currentRole.toUpperCase()}**\n\n` +
+      `Select new role:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in change specific role:', error);
+    await ctx.reply('⚠️ An error occurred while changing role.');
+  }
+});
+
+// Set specific role
+bot.action(/set_role\|(\d+)\|(\w+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const userId = BigInt(ctx.match[1]);
+    const newRole = ctx.match[2];
+    const { user, member } = await requireActiveMembership(ctx);
+    
+    if (!member || member.role !== 'facility_admin') {
+      return ctx.reply('⚠️ Only facility admins can change roles.');
+    }
+    
+    // Update member role
+    await prisma.facilityMember.update({
+      where: {
+        userId_facilityId: {
+          userId,
+          facilityId: user.activeFacilityId
+        }
+      },
+      data: { role: newRole }
+    });
+    
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+    
+    const roleText = {
+      'user': 'User',
+      'technician': 'Technician',
+      'supervisor': 'Supervisor'
+    };
+    
+    await ctx.reply(
+      `✅ **Role Updated Successfully!**\n\n` +
+      `👤 **Member:** ${targetUser?.firstName || `User ${userId}`}\n` +
+      `🔐 **New Role:** ${roleText[newRole]}\n` +
+      `🏢 **Facility:** ${user.activeFacilityId}\n\n` +
+      `The member has been notified of their role change.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 Back to Management', callback_data: 'manage_members' }]]
+        }
+      }
+    );
+    
+    // Notify the user of role change
+    await createNotification(
+      userId,
+      user.activeFacilityId,
+      'role_changed',
+      'Role Updated',
+      `Your role has been changed to ${roleText[newRole]} by the facility administrator.`,
+      { newRole: newRole }
+    );
+    
+  } catch (error) {
+    console.error('Error setting role:', error);
+    await ctx.reply('⚠️ An error occurred while setting role.');
   }
 });
 
