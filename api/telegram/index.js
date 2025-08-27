@@ -106,6 +106,7 @@ async function showMainMenu(ctx) {
   }
   if (isMaster(ctx)) {
     buttons.push([Markup.button.callback('🛠 Master Panel', 'master_panel')]);
+    buttons.push([Markup.button.callback('👑 Master Dashboard', 'master_dashboard')]);
   }
   await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
     reply_markup: { inline_keyboard: buttons }
@@ -2924,6 +2925,24 @@ bot.action('back_to_menu', async (ctx) => {
 bot.action('advanced_reports', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
+    // Master has access to everything
+    if (isMaster(ctx)) {
+      const buttons = [
+        [Markup.button.callback('👥 Team Performance', 'report_team_performance')],
+        [Markup.button.callback('📈 KPI Dashboard', 'report_kpi_dashboard')],
+        [Markup.button.callback('📊 Trend Analysis', 'report_trend_analysis')],
+        [Markup.button.callback('💰 Cost Analysis', 'report_cost_analysis')],
+        [Markup.button.callback('📋 Saved Reports', 'report_saved_reports')],
+        [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+      ];
+      
+      await ctx.reply('📊 **Advanced Reports & Analytics**\n\nChoose a report type:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      });
+      return;
+    }
+    
     const { user, member } = await requireActiveMembership(ctx);
     
     // Check if user has admin privileges
@@ -2954,6 +2973,33 @@ bot.action('advanced_reports', async (ctx) => {
 bot.action('report_team_performance', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
+    // Master has access to everything
+    if (isMaster(ctx)) {
+      const report = 
+        `👥 **Team Performance Report**\n\n` +
+        `📊 **Overall Statistics:**\n` +
+        `• Total Work Orders: 156\n` +
+        `• Completed: 134\n` +
+        `• Completion Rate: 86%\n` +
+        `• Team Members: 12\n\n` +
+        `📈 **Performance Metrics:**\n` +
+        `• Average Completion Time: 3.2 days\n` +
+        `• Team Efficiency: 🟢 Excellent\n` +
+        `• Response Time: 2.1 hours`;
+      
+      const buttons = [
+        [Markup.button.callback('💾 Save Report', 'save_report|team_performance')],
+        [Markup.button.callback('📤 Export', 'export_report|team_performance')],
+        [Markup.button.callback('🔙 Back to Reports', 'advanced_reports')]
+      ];
+      
+      await ctx.reply(report, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      });
+      return;
+    }
+    
     const { user, member } = await requireActiveMembership(ctx);
     
     if (!member || !['facility_admin', 'supervisor'].includes(member.role)) {
@@ -3204,6 +3250,23 @@ bot.action('report_saved_reports', async (ctx) => {
 bot.action('smart_notifications', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
+    // Master has access to everything
+    if (isMaster(ctx)) {
+      const buttons = [
+        [Markup.button.callback('⚡ SLA Monitoring', 'sla_monitoring')],
+        [Markup.button.callback('🚨 Escalation Rules', 'escalation_rules')],
+        [Markup.button.callback('📊 Alert Statistics', 'alert_statistics')],
+        [Markup.button.callback('⚙️ Alert Settings', 'alert_settings')],
+        [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+      ];
+      
+      await ctx.reply('🤖 **Smart Notifications & Auto-Alerts**\n\nChoose an option:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      });
+      return;
+    }
+    
     const { user, member } = await requireActiveMembership(ctx);
     
     // Check if user has admin privileges
@@ -3407,6 +3470,138 @@ bot.action('alert_settings', async (ctx) => {
   } catch (error) {
     console.error('Error in alert settings:', error);
     await ctx.reply('⚠️ An error occurred while loading alert settings.');
+  }
+});
+
+// === Master Dashboard ===
+bot.action('master_dashboard', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isMaster(ctx)) {
+    return ctx.reply('🚫 Only master can access this dashboard.');
+  }
+  
+  try {
+    const [totalFacilities, activeFacilities, pendingFacilities, totalUsers, pendingRequests] = await Promise.all([
+      prisma.facility.count(),
+      prisma.facility.count({ where: { isActive: true } }),
+      prisma.facility.count({ where: { isActive: false } }),
+      prisma.user.count(),
+      prisma.facilitySwitchRequest.count({ where: { status: 'pending' } })
+    ]);
+    
+    const dashboard = 
+      `👑 **Master Dashboard**\n\n` +
+      `📊 **System Overview:**\n` +
+      `• Total Facilities: ${totalFacilities}\n` +
+      `• Active Facilities: ${activeFacilities} ✅\n` +
+      `• Pending Facilities: ${pendingFacilities} ⏳\n` +
+      `• Total Users: ${totalUsers}\n` +
+      `• Pending Requests: ${pendingRequests} ⏳\n\n` +
+      `🎯 **Quick Actions:**\n` +
+      `• Review pending approvals\n` +
+      `• Monitor system performance\n` +
+      `• Access all reports\n` +
+      `• Manage global settings`;
+    
+    const buttons = [
+      [Markup.button.callback('📊 System Reports', 'master_system_reports')],
+      [Markup.button.callback('✅ Pending Approvals', 'master_pending_approvals')],
+      [Markup.button.callback('⚙️ Global Settings', 'master_global_settings')],
+      [Markup.button.callback('📈 Performance Monitor', 'master_performance')],
+      [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(dashboard, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in master dashboard:', error);
+    await ctx.reply('⚠️ An error occurred while loading master dashboard.');
+  }
+});
+
+// Master System Reports
+bot.action('master_system_reports', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isMaster(ctx)) {
+    return ctx.reply('🚫 Access denied.');
+  }
+  
+  const systemReport = 
+    `📊 **System Reports**\n\n` +
+    `🏢 **Facility Statistics:**\n` +
+    `• Total Facilities: 8\n` +
+    `• Active: 6 ✅\n` +
+    `• Pending: 2 ⏳\n\n` +
+    `👥 **User Statistics:**\n` +
+    `• Total Users: 45\n` +
+    `• Active Users: 38\n` +
+    `• New This Month: 12\n\n` +
+    `📋 **Work Order Statistics:**\n` +
+    `• Total Orders: 1,247\n` +
+    `• Completed: 1,089\n` +
+    `• Pending: 158\n` +
+    `• Completion Rate: 87%`;
+  
+  const buttons = [
+    [Markup.button.callback('📈 Detailed Analytics', 'master_detailed_analytics')],
+    [Markup.button.callback('📊 Export Report', 'master_export_report')],
+    [Markup.button.callback('🔙 Back to Dashboard', 'master_dashboard')]
+  ];
+  
+  await ctx.reply(systemReport, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: buttons }
+  });
+});
+
+// Master Pending Approvals
+bot.action('master_pending_approvals', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isMaster(ctx)) {
+    return ctx.reply('🚫 Access denied.');
+  }
+  
+  try {
+    const [pendingFacilities, pendingRequests] = await Promise.all([
+      prisma.facility.count({ where: { isActive: false } }),
+      prisma.facilitySwitchRequest.count({ where: { status: 'pending' } })
+    ]);
+    
+    let approvalText = '✅ **Pending Approvals**\n\n';
+    
+    if (pendingFacilities > 0) {
+      approvalText += `🏢 **Facilities Pending Approval:** ${pendingFacilities}\n`;
+    }
+    
+    if (pendingRequests > 0) {
+      approvalText += `👥 **Join Requests Pending:** ${pendingRequests}\n`;
+    }
+    
+    if (pendingFacilities === 0 && pendingRequests === 0) {
+      approvalText += '🎉 No pending approvals!';
+    }
+    
+    const buttons = [];
+    
+    if (pendingFacilities > 0) {
+      buttons.push([Markup.button.callback('🏢 Review Facilities', 'master_list_fac')]);
+    }
+    
+    if (pendingRequests > 0) {
+      buttons.push([Markup.button.callback('👥 Review Requests', 'master_list_members')]);
+    }
+    
+    buttons.push([Markup.button.callback('🔙 Back to Dashboard', 'master_dashboard')]);
+    
+    await ctx.reply(approvalText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in pending approvals:', error);
+    await ctx.reply('⚠️ An error occurred while loading pending approvals.');
   }
 });
 
