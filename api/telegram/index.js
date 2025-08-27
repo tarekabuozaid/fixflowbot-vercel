@@ -607,66 +607,188 @@ bot.on('text', async (ctx, next) => {
   if (!flowState) return next();
   const text = (ctx.message.text || '').trim();
   try {
-    // Facility Registration flow
+    // === FACILITY REGISTRATION FLOW ===
     if (flowState.flow === 'reg_fac') {
+      // Step 1: Facility Name
       if (flowState.step === 1) {
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ Facility registration cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
         flowState.data.name = text.slice(0, 60);
         if (flowState.data.name.length < 2) {
-          return ctx.reply('Name must be at least 2 characters. Try again:');
+          return ctx.reply('⚠️ Name must be at least 2 characters. Try again or type /cancel to exit:');
         }
+        
+        // Check if facility name already exists
+        const existingFacility = await prisma.facility.findUnique({
+          where: { name: flowState.data.name }
+        });
+        
+        if (existingFacility) {
+          return ctx.reply('⚠️ A facility with this name already exists. Please choose a different name or type /cancel to exit:');
+        }
+        
         flowState.step = 2;
         flows.set(ctx.from.id, flowState);
-        return ctx.reply('🏙️ Facility Registration (2/4)\nEnter the city (max 40 chars):');
+        
+        return ctx.reply(
+          `✅ **Facility Name:** ${flowState.data.name}\n\n` +
+          `🏙️ **Step 2/4: Enter the city**\n` +
+          `Maximum 40 characters\n\n` +
+          `Type /cancel to exit registration`,
+          { parse_mode: 'Markdown' }
+        );
       }
+      
+      // Step 2: City
       if (flowState.step === 2) {
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ Facility registration cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
         flowState.data.city = text.slice(0, 40);
         if (flowState.data.city.length < 2) {
-          return ctx.reply('City must be at least 2 characters. Try again:');
+          return ctx.reply('⚠️ City must be at least 2 characters. Try again or type /cancel to exit:');
         }
+        
         flowState.step = 3;
         flows.set(ctx.from.id, flowState);
-        return ctx.reply('📞 Facility Registration (3/4)\nEnter a contact phone (max 25 chars):');
+        
+        return ctx.reply(
+          `✅ **Facility Name:** ${flowState.data.name}\n` +
+          `✅ **City:** ${flowState.data.city}\n\n` +
+          `📞 **Step 3/4: Enter contact phone**\n` +
+          `Maximum 25 characters\n\n` +
+          `Type /cancel to exit registration`,
+          { parse_mode: 'Markdown' }
+        );
       }
+      
+      // Step 3: Phone
       if (flowState.step === 3) {
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ Facility registration cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
         flowState.data.phone = text.slice(0, 25);
+        if (flowState.data.phone.length < 5) {
+          return ctx.reply('⚠️ Phone must be at least 5 characters. Try again or type /cancel to exit:');
+        }
+        
         flowState.step = 4;
         flows.set(ctx.from.id, flowState);
-        const planButtons = ['Free', 'Pro', 'Business'].map(p => [Markup.button.callback(p, `regfac_plan|${p}`)]);
-        return ctx.reply('💼 Facility Registration (4/4)\nChoose a subscription plan:', { reply_markup: { inline_keyboard: planButtons } });
+        
+        const planButtons = [
+          [{ text: '🆓 Free Plan', callback_data: 'regfac_plan|Free' }],
+          [{ text: '⭐ Pro Plan', callback_data: 'regfac_plan|Pro' }],
+          [{ text: '🏢 Business Plan', callback_data: 'regfac_plan|Business' }],
+          [{ text: '❌ Cancel', callback_data: 'regfac_cancel' }]
+        ];
+        
+        return ctx.reply(
+          `✅ **Facility Name:** ${flowState.data.name}\n` +
+          `✅ **City:** ${flowState.data.city}\n` +
+          `✅ **Phone:** ${flowState.data.phone}\n\n` +
+          `💼 **Step 4/4: Choose subscription plan**\n\n` +
+          `**Available Plans:**\n` +
+          `🆓 **Free:** Basic features\n` +
+          `⭐ **Pro:** Advanced features\n` +
+          `🏢 **Business:** Enterprise features`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: planButtons }
+          }
+        );
       }
-      // Step 4 handled via callback
     }
     
-    // User Registration flows
+    // === USER REGISTRATION FLOW ===
     if (flowState.flow === 'register_user' || flowState.flow === 'register_technician' || flowState.flow === 'register_supervisor') {
+      const roleText = {
+        'register_user': 'User',
+        'register_technician': 'Technician', 
+        'register_supervisor': 'Supervisor'
+      };
+      
+      // Step 1: Full Name
       if (flowState.step === 1) {
-        // Step 1: Full Name
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ User registration cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
         flowState.data.fullName = text.slice(0, 100);
         if (flowState.data.fullName.length < 2) {
-          return ctx.reply('Name must be at least 2 characters. Please try again:');
+          return ctx.reply('⚠️ Name must be at least 2 characters. Try again or type /cancel to exit:');
         }
+        
         flowState.step = 2;
         flows.set(ctx.from.id, flowState);
-        return ctx.reply('📧 Enter your **email address** (optional, press /skip to skip):');
+        
+        return ctx.reply(
+          `✅ **Full Name:** ${flowState.data.fullName}\n` +
+          `✅ **Role:** ${roleText[flowState.flow]}\n\n` +
+          `📧 **Step 2/4: Enter your email address**\n` +
+          `(Optional - type /skip to skip or /cancel to exit)`,
+          { parse_mode: 'Markdown' }
+        );
       }
+      
+      // Step 2: Email (optional)
       if (flowState.step === 2) {
-        // Step 2: Email (optional)
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ User registration cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
         if (text.toLowerCase() === '/skip') {
           flowState.data.email = null;
         } else {
           flowState.data.email = text.slice(0, 100);
         }
+        
         flowState.step = 3;
         flows.set(ctx.from.id, flowState);
-        return ctx.reply('📞 Enter your **phone number** (optional, press /skip to skip):');
+        
+        return ctx.reply(
+          `✅ **Full Name:** ${flowState.data.fullName}\n` +
+          `✅ **Role:** ${roleText[flowState.flow]}\n` +
+          `✅ **Email:** ${flowState.data.email || 'Not provided'}\n\n` +
+          `📞 **Step 3/4: Enter your phone number**\n` +
+          `(Optional - type /skip to skip or /cancel to exit)`,
+          { parse_mode: 'Markdown' }
+        );
       }
+      
+      // Step 3: Phone (optional)
       if (flowState.step === 3) {
-        // Step 3: Phone (optional)
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ User registration cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
         if (text.toLowerCase() === '/skip') {
           flowState.data.phone = null;
         } else {
           flowState.data.phone = text.slice(0, 25);
         }
+        
         flowState.step = 4;
         flows.set(ctx.from.id, flowState);
         
@@ -678,64 +800,110 @@ bot.on('text', async (ctx, next) => {
         
         if (!facilities.length) {
           flows.delete(ctx.from.id);
-          return ctx.reply('⚠️ No active facilities found. Please contact the system administrator.');
+          return ctx.reply('⚠️ No active facilities found. Please contact the system administrator.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
         }
         
         const buttons = facilities.map(f => [
-          Markup.button.callback(f.name, `join_facility|${f.id.toString()}|${flowState.data.role}`)
+          { text: f.name, callback_data: `join_facility|${f.id.toString()}|${flowState.data.role}` }
         ]);
-        buttons.push([Markup.button.callback('🔙 Cancel', 'back_to_menu')]);
-        
-        const roleText = {
-          'user': 'User',
-          'technician': 'Technician',
-          'supervisor': 'Supervisor'
-        };
+        buttons.push([{ text: '❌ Cancel', callback_data: 'user_reg_cancel' }]);
         
         return ctx.reply(
-          `🏢 **Select Facility to Join**\n\n` +
-          `Role: **${roleText[flowState.data.role]}**\n` +
-          `Name: **${flowState.data.fullName}**\n` +
-          `Email: **${flowState.data.email || 'Not provided'}**\n` +
-          `Phone: **${flowState.data.phone || 'Not provided'}**\n\n` +
+          `✅ **Full Name:** ${flowState.data.fullName}\n` +
+          `✅ **Role:** ${roleText[flowState.flow]}\n` +
+          `✅ **Email:** ${flowState.data.email || 'Not provided'}\n` +
+          `✅ **Phone:** ${flowState.data.phone || 'Not provided'}\n\n` +
+          `🏢 **Step 4/4: Select Facility to Join**\n\n` +
           `Choose a facility to join:`,
-          { reply_markup: { inline_keyboard: buttons } }
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons }
+          }
         );
       }
     }
     
-    // Work order flow
-     if (flowState.flow === 'wo_new') {
-       if (flowState.step === 4) {
-         // Step 4: Location
-         flowState.data.location = text.slice(0, 100);
-         if (flowState.data.location.length < 2) {
-           return ctx.reply('Location must be at least 2 characters. Try again:');
-         }
-         flowState.step = 5;
-         flows.set(ctx.from.id, flowState);
-         return ctx.reply(`🔧 Work Order Creation (5/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\n\n🔧 Enter equipment/device name (optional, press /skip to skip):`);
-       }
-       if (flowState.step === 5) {
-         // Step 5: Equipment (optional)
-         if (text.toLowerCase() === '/skip') {
-           flowState.data.equipment = null;
-         } else {
-           flowState.data.equipment = text.slice(0, 100);
-         }
-         flowState.step = 6;
-         flows.set(ctx.from.id, flowState);
-         return ctx.reply(`🔧 Work Order Creation (6/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\nLocation: ${flowState.data.location}\nEquipment: ${flowState.data.equipment || 'N/A'}\n\n📝 Please describe the issue in detail:`);
-       }
-       if (flowState.step === 6) {
-         // Step 6: Description
-         const desc = text.slice(0, 500);
-         if (desc.length < 10) {
-           return ctx.reply('Description must be at least 10 characters. Please provide more details:');
-         }
-         
-         const { user } = await requireActiveMembership(ctx);
-                  const wo = await prisma.workOrder.create({
+    // === WORK ORDER CREATION FLOW ===
+    if (flowState.flow === 'wo_new') {
+      // Step 4: Location
+      if (flowState.step === 4) {
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ Work order creation cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
+        flowState.data.location = text.slice(0, 100);
+        if (flowState.data.location.length < 2) {
+          return ctx.reply('⚠️ Location must be at least 2 characters. Try again or type /cancel to exit:');
+        }
+        
+        flowState.step = 5;
+        flows.set(ctx.from.id, flowState);
+        
+        return ctx.reply(
+          `✅ **Type:** ${flowState.data.typeOfWork}\n` +
+          `✅ **Service:** ${flowState.data.typeOfService}\n` +
+          `✅ **Priority:** ${flowState.data.priority}\n` +
+          `✅ **Location:** ${flowState.data.location}\n\n` +
+          `🔧 **Step 5/6: Enter equipment/device name**\n` +
+          `(Optional - type /skip to skip or /cancel to exit)`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // Step 5: Equipment (optional)
+      if (flowState.step === 5) {
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ Work order creation cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
+        if (text.toLowerCase() === '/skip') {
+          flowState.data.equipment = null;
+        } else {
+          flowState.data.equipment = text.slice(0, 100);
+        }
+        
+        flowState.step = 6;
+        flows.set(ctx.from.id, flowState);
+        
+        return ctx.reply(
+          `✅ **Type:** ${flowState.data.typeOfWork}\n` +
+          `✅ **Service:** ${flowState.data.typeOfService}\n` +
+          `✅ **Priority:** ${flowState.data.priority}\n` +
+          `✅ **Location:** ${flowState.data.location}\n` +
+          `✅ **Equipment:** ${flowState.data.equipment || 'Not specified'}\n\n` +
+          `📝 **Step 6/6: Describe the issue in detail**\n` +
+          `Minimum 10 characters\n\n` +
+          `Type /cancel to exit`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // Step 6: Description
+      if (flowState.step === 6) {
+        if (text.toLowerCase() === '/cancel') {
+          flows.delete(ctx.from.id);
+          return ctx.reply('❌ Work order creation cancelled.', {
+            reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+          });
+        }
+        
+        const desc = text.slice(0, 500);
+        if (desc.length < 10) {
+          return ctx.reply('⚠️ Description must be at least 10 characters. Please provide more details or type /cancel to exit:');
+        }
+        
+        try {
+          const { user } = await requireActiveMembership(ctx);
+          
+          const wo = await prisma.workOrder.create({
             data: {
               facilityId: user.activeFacilityId,
               createdByUserId: user.id,
@@ -782,33 +950,41 @@ bot.on('text', async (ctx, next) => {
               }
             }
           }
-         
-         flows.delete(ctx.from.id);
-         
-         const priorityEmoji = {
-           'high': '🔴',
-           'medium': '🟡',
-           'low': '🟢'
-         };
-         
-         await ctx.reply(
-           `✅ Work Order Created Successfully!\n\n` +
-           `📋 **Work Order #${wo.id.toString()}**\n` +
-           `🔧 Type: ${flowState.data.typeOfWork}\n` +
-           `⚡ Service: ${flowState.data.typeOfService}\n` +
-           `${priorityEmoji[flowState.data.priority]} Priority: ${flowState.data.priority}\n` +
-           `📍 Location: ${flowState.data.location}\n` +
-           `🔧 Equipment: ${flowState.data.equipment || 'N/A'}\n` +
-           `📝 Description: ${desc.slice(0, 100)}${desc.length > 100 ? '...' : ''}\n\n` +
-           `Status: 🔵 Open`,
-           {
-             reply_markup: {
-               inline_keyboard: [
-                 [Markup.button.callback('🏠 Back to Menu', 'back_to_menu')]
-               ]
+          
+          flows.delete(ctx.from.id);
+          
+          const priorityEmoji = {
+            'high': '🔴',
+            'medium': '🟡',
+            'low': '🟢'
+          };
+          
+                     await ctx.reply(
+             `✅ **Work Order Created Successfully!**\n\n` +
+             `📋 **Work Order #${wo.id.toString()}**\n` +
+             `🔧 Type: ${flowState.data.typeOfWork}\n` +
+             `⚡ Service: ${flowState.data.typeOfService}\n` +
+             `${priorityEmoji[flowState.data.priority]} Priority: ${flowState.data.priority}\n` +
+             `📍 Location: ${flowState.data.location}\n` +
+             `🔧 Equipment: ${flowState.data.equipment || 'N/A'}\n` +
+             `📝 Description: ${desc.slice(0, 100)}${desc.length > 100 ? '...' : ''}\n\n` +
+             `Status: 🔵 Open`,
+             {
+               parse_mode: 'Markdown',
+               reply_markup: {
+                 inline_keyboard: [
+                   [Markup.button.callback('🏠 Back to Menu', 'back_to_menu')]
+                 ]
+               }
              }
-           }
-         );
+           );
+         } catch (error) {
+           console.error('Error creating work order:', error);
+           flows.delete(ctx.from.id);
+           await ctx.reply('⚠️ An error occurred while creating the work order. Please try again.', {
+             reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+           });
+         }
          return;
        }
      }
@@ -889,10 +1065,12 @@ bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)
     [Markup.button.callback('❄️ HVAC', 'wo_service|hvac')],
     [Markup.button.callback('🏗️ Structural', 'wo_service|structural')],
     [Markup.button.callback('💻 IT/Technology', 'wo_service|it')],
-    [Markup.button.callback('🧹 General', 'wo_service|general')]
+    [Markup.button.callback('🧹 General', 'wo_service|general')],
+    [Markup.button.callback('❌ Cancel', 'wo_cancel')]
   ];
   
-  await ctx.reply(`🔧 Work Order Creation (2/6)\nType: ${flowState.data.typeOfWork}\nChoose the service type:`, {
+  await ctx.reply(`🔧 **Work Order Creation (2/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n\n**Choose the service type:**`, {
+    parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: serviceTypeButtons }
   });
 });
@@ -911,10 +1089,12 @@ bot.action(/wo_service\|(electrical|mechanical|plumbing|hvac|structural|it|gener
   const priorityButtons = [
     [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
     [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
-    [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')]
+    [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')],
+    [Markup.button.callback('❌ Cancel', 'wo_cancel')]
   ];
   
-  await ctx.reply(`🔧 Work Order Creation (3/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nChoose priority:`, {
+  await ctx.reply(`🔧 **Work Order Creation (3/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n✅ **Service:** ${flowState.data.typeOfService}\n\n**Choose priority:**`, {
+    parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: priorityButtons }
   });
 });
@@ -929,7 +1109,43 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
   flowState.step = 4;
   flows.set(ctx.from.id, flowState);
   
-  await ctx.reply(`🔧 Work Order Creation (4/6)\nType: ${flowState.data.typeOfWork}\nService: ${flowState.data.typeOfService}\nPriority: ${flowState.data.priority}\n\n📍 Enter the location/area (e.g., Building A, Floor 2, Room 101):`);
+  await ctx.reply(
+    `🔧 **Work Order Creation (4/6)**\n\n` +
+    `✅ **Type:** ${flowState.data.typeOfWork}\n` +
+    `✅ **Service:** ${flowState.data.typeOfService}\n` +
+    `✅ **Priority:** ${flowState.data.priority}\n\n` +
+    `📍 **Enter the location/area**\n` +
+    `(e.g., Building A, Floor 2, Room 101)\n\n` +
+    `Type /cancel to exit`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// Handle facility registration cancellation
+bot.action('regfac_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  flows.delete(ctx.from.id);
+  await ctx.reply('❌ Facility registration cancelled.', {
+    reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+  });
+});
+
+// Handle user registration cancellation
+bot.action('user_reg_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  flows.delete(ctx.from.id);
+  await ctx.reply('❌ User registration cancelled.', {
+    reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+  });
+});
+
+// Handle work order creation cancellation
+bot.action('wo_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  flows.delete(ctx.from.id);
+  await ctx.reply('❌ Work order creation cancelled.', {
+    reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+  });
 });
 
 // Handle plan selection during facility registration
