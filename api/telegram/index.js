@@ -74,9 +74,11 @@ async function getUser(ctx) {
 }
 
 async function showMainMenu(ctx) {
-  const user = await ensureUser(ctx);
-  const buttons = [];
-  if (user.status === 'active' && user.activeFacilityId) {
+  try {
+    const user = await ensureUser(ctx);
+    const buttons = [];
+    
+    if (user.status === 'active' && user.activeFacilityId) {
     buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
     buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
     
@@ -122,7 +124,7 @@ async function showMainMenu(ctx) {
     const activeReminders = await prisma.reminder.count({
       where: { 
         facilityId: user.activeFacilityId,
-        status: 'active',
+        isActive: true,
         scheduledFor: { gte: new Date() }
       }
     });
@@ -145,11 +147,13 @@ async function showMainMenu(ctx) {
   await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
     reply_markup: { inline_keyboard: buttons }
   });
+  } catch (error) {
+    console.error('Error in showMainMenu:', error);
+    await ctx.reply('⚠️ An error occurred while loading the menu. Please try again.');
+  }
 }
 
-bot.start(async (ctx) => {
-  await showMainMenu(ctx);
-});
+// Remove duplicate start handler - using bot.command('start') instead
 
 // === Official Commands ===
 bot.command('registerfacility', async (ctx) => {
