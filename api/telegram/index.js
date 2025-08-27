@@ -72,6 +72,11 @@ async function showMainMenu(ctx) {
       buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
     }
     
+    // Add user registration options
+    buttons.push([Markup.button.callback('👤 Register as User', 'register_user')]);
+    buttons.push([Markup.button.callback('🔧 Register as Technician', 'register_technician')]);
+    buttons.push([Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')]);
+    
     // Add notifications button
     const unreadCount = await prisma.notification.count({
       where: { userId: user.id, isRead: false }
@@ -304,6 +309,127 @@ async function requireMembershipOrList(ctx) {
   await ctx.reply('Please choose a facility to request membership:', { reply_markup: { inline_keyboard: rows } });
 }
 
+// Join facility with specific role
+bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const facilityId = BigInt(ctx.match[1]);
+    const role = ctx.match[2];
+    const user = await getUser(ctx);
+    
+    // Get flow data
+    const flowState = flows.get(ctx.from.id);
+    if (!flowState || !['register_user', 'register_technician', 'register_supervisor'].includes(flowState.flow)) {
+      return ctx.reply('⚠️ Invalid registration flow. Please start over.');
+    }
+    
+    // Check if facility exists and is active
+    const facility = await prisma.facility.findUnique({
+      where: { id: facilityId }
+    });
+    
+    if (!facility || facility.status !== 'active') {
+      return ctx.reply('⚠️ Facility not found or inactive.');
+    }
+    
+    // Check if user is already a member
+    const existingMembership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, facilityId }
+    });
+    
+    if (existingMembership) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('⚠️ You are already a member of this facility.');
+    }
+    
+    // Update user profile with registration data
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        firstName: flowState.data.fullName,
+        email: flowState.data.email,
+        phone: flowState.data.phone
+      }
+    });
+    
+    // Create membership request
+    const membership = await prisma.facilityMember.create({
+      data: {
+        userId: user.id,
+        facilityId,
+        role: role,
+        status: 'pending',
+        joinedAt: new Date()
+      }
+    });
+    
+    // Create switch request for approval
+    await prisma.facilitySwitchRequest.create({
+      data: {
+        userId: user.id,
+        facilityId,
+        requestedRole: role,
+        status: 'pending',
+        requestDate: new Date()
+      }
+    });
+    
+    // Clear flow
+    flows.delete(ctx.from.id);
+    
+    const roleText = {
+      'user': 'User',
+      'technician': 'Technician',
+      'supervisor': 'Supervisor'
+    };
+    
+    await ctx.reply(
+      `✅ **Registration Request Submitted!**\n\n` +
+      `🏢 **Facility:** ${facility.name}\n` +
+      `👤 **Role:** ${roleText[role]}\n` +
+      `📝 **Name:** ${flowState.data.fullName}\n` +
+      `📧 **Email:** ${flowState.data.email || 'Not provided'}\n` +
+      `📞 **Phone:** ${flowState.data.phone || 'Not provided'}\n\n` +
+      `⏳ **Status:** Pending Approval\n\n` +
+      `The facility administrator will review your request and approve it soon. You will receive a notification once approved.`,
+      {
+        reply_markup: {
+          inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]]
+        }
+      }
+    );
+    
+    // Notify facility admins
+    const admins = await prisma.facilityMember.findMany({
+      where: {
+        facilityId,
+        role: 'facility_admin'
+      },
+      include: { user: true }
+    });
+    
+    for (const admin of admins) {
+      await createNotification(
+        admin.userId,
+        facilityId,
+        'new_member_request',
+        'New Member Request',
+        `New ${roleText[role]} registration request from ${flowState.data.fullName}`,
+        { 
+          userId: user.id.toString(),
+          facilityId: facilityId.toString(),
+          role: role
+        }
+      );
+    }
+    
+  } catch (error) {
+    console.error('Error joining facility:', error);
+    flows.delete(ctx.from.id);
+    await ctx.reply('⚠️ An error occurred while processing your request.');
+  }
+});
+
 bot.action(/join_fac\|(\d+)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const facId = BigInt(ctx.match[1]);
@@ -477,7 +603,75 @@ bot.on('text', async (ctx, next) => {
       }
       // Step 4 handled via callback
     }
-         // Work order flow
+    
+    // User Registration flows
+    if (flowState.flow === 'register_user' || flowState.flow === 'register_technician' || flowState.flow === 'register_supervisor') {
+      if (flowState.step === 1) {
+        // Step 1: Full Name
+        flowState.data.fullName = text.slice(0, 100);
+        if (flowState.data.fullName.length < 2) {
+          return ctx.reply('Name must be at least 2 characters. Please try again:');
+        }
+        flowState.step = 2;
+        flows.set(ctx.from.id, flowState);
+        return ctx.reply('📧 Enter your **email address** (optional, press /skip to skip):');
+      }
+      if (flowState.step === 2) {
+        // Step 2: Email (optional)
+        if (text.toLowerCase() === '/skip') {
+          flowState.data.email = null;
+        } else {
+          flowState.data.email = text.slice(0, 100);
+        }
+        flowState.step = 3;
+        flows.set(ctx.from.id, flowState);
+        return ctx.reply('📞 Enter your **phone number** (optional, press /skip to skip):');
+      }
+      if (flowState.step === 3) {
+        // Step 3: Phone (optional)
+        if (text.toLowerCase() === '/skip') {
+          flowState.data.phone = null;
+        } else {
+          flowState.data.phone = text.slice(0, 25);
+        }
+        flowState.step = 4;
+        flows.set(ctx.from.id, flowState);
+        
+        // Show facility selection
+        const facilities = await prisma.facility.findMany({
+          where: { status: 'active' },
+          orderBy: { name: 'asc' }
+        });
+        
+        if (!facilities.length) {
+          flows.delete(ctx.from.id);
+          return ctx.reply('⚠️ No active facilities found. Please contact the system administrator.');
+        }
+        
+        const buttons = facilities.map(f => [
+          Markup.button.callback(f.name, `join_facility|${f.id.toString()}|${flowState.data.role}`)
+        ]);
+        buttons.push([Markup.button.callback('🔙 Cancel', 'back_to_menu')]);
+        
+        const roleText = {
+          'user': 'User',
+          'technician': 'Technician',
+          'supervisor': 'Supervisor'
+        };
+        
+        return ctx.reply(
+          `🏢 **Select Facility to Join**\n\n` +
+          `Role: **${roleText[flowState.data.role]}**\n` +
+          `Name: **${flowState.data.fullName}**\n` +
+          `Email: **${flowState.data.email || 'Not provided'}**\n` +
+          `Phone: **${flowState.data.phone || 'Not provided'}**\n\n` +
+          `Choose a facility to join:`,
+          { reply_markup: { inline_keyboard: buttons } }
+        );
+      }
+    }
+    
+    // Work order flow
      if (flowState.flow === 'wo_new') {
        if (flowState.step === 4) {
          // Step 4: Location
@@ -3605,6 +3799,7 @@ bot.action('master_dashboard', async (ctx) => {
     const buttons = [
       [Markup.button.callback('📊 System Reports', 'master_system_reports')],
       [Markup.button.callback('✅ Pending Approvals', 'master_pending_approvals')],
+      [Markup.button.callback('👥 Member Requests', 'master_member_requests')],
       [Markup.button.callback('⚙️ Global Settings', 'master_global_settings')],
       [Markup.button.callback('📈 Performance Monitor', 'master_performance')],
       [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
@@ -3653,6 +3848,137 @@ bot.action('master_system_reports', async (ctx) => {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: buttons }
   });
+});
+
+// Master Member Requests
+bot.action('master_member_requests', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isMaster(ctx)) {
+    return ctx.reply('🚫 Access denied.');
+  }
+  
+  try {
+    const pendingRequests = await prisma.facilitySwitchRequest.findMany({
+      where: { status: 'pending' },
+      include: {
+        user: true,
+        facility: true
+      },
+      orderBy: { requestDate: 'desc' },
+      take: 10
+    });
+    
+    if (!pendingRequests.length) {
+      return ctx.reply('✅ No pending member requests found.');
+    }
+    
+    let requestsText = '👥 **Pending Member Requests**\n\n';
+    
+    pendingRequests.forEach((request, index) => {
+      const roleText = {
+        'user': '👤 User',
+        'technician': '🔧 Technician',
+        'supervisor': '👨‍💼 Supervisor'
+      };
+      
+      requestsText += `${index + 1}. **${request.user.firstName || `User ${request.user.id}`}**\n`;
+      requestsText += `   🏢 ${request.facility?.name || 'Unknown Facility'}\n`;
+      requestsText += `   ${roleText[request.requestedRole] || 'Unknown Role'}\n`;
+      requestsText += `   📅 ${request.requestDate.toLocaleDateString()}\n\n`;
+    });
+    
+    const buttons = [
+      [Markup.button.callback('✅ Approve All', 'master_approve_all_requests')],
+      [Markup.button.callback('❌ Reject All', 'master_reject_all_requests')],
+      [Markup.button.callback('🔍 Review Individual', 'master_review_individual')],
+      [Markup.button.callback('🔙 Back to Dashboard', 'master_dashboard')]
+    ];
+    
+    await ctx.reply(requestsText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error loading member requests:', error);
+    await ctx.reply('⚠️ An error occurred while loading member requests.');
+  }
+});
+
+// Approve all pending requests
+bot.action('master_approve_all_requests', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isMaster(ctx)) {
+    return ctx.reply('🚫 Access denied.');
+  }
+  
+  try {
+    const pendingRequests = await prisma.facilitySwitchRequest.findMany({
+      where: { status: 'pending' },
+      include: { user: true, facility: true }
+    });
+    
+    let approvedCount = 0;
+    
+    for (const request of pendingRequests) {
+      // Update switch request status
+      await prisma.facilitySwitchRequest.update({
+        where: { id: request.id },
+        data: { status: 'approved' }
+      });
+      
+      // Create or update facility membership
+      await prisma.facilityMember.upsert({
+        where: {
+          userId_facilityId: {
+            userId: request.userId,
+            facilityId: request.facilityId
+          }
+        },
+        update: {
+          role: request.requestedRole,
+          status: 'active'
+        },
+        create: {
+          userId: request.userId,
+          facilityId: request.facilityId,
+          role: request.requestedRole,
+          status: 'active',
+          joinedAt: new Date()
+        }
+      });
+      
+      // Set active facility for user
+      await prisma.user.update({
+        where: { id: request.userId },
+        data: { activeFacilityId: request.facilityId }
+      });
+      
+      // Send notification to user
+      await createNotification(
+        request.userId,
+        request.facilityId,
+        'membership_approved',
+        'Membership Approved',
+        `Your ${request.requestedRole} membership request for ${request.facility?.name} has been approved!`,
+        { facilityId: request.facilityId.toString() }
+      );
+      
+      approvedCount++;
+    }
+    
+    await ctx.reply(
+      `✅ **Approved ${approvedCount} Member Requests!**\n\n` +
+      `All pending requests have been approved and users have been notified.`,
+      {
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 Back to Dashboard', callback_data: 'master_dashboard' }]]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error approving requests:', error);
+    await ctx.reply('⚠️ An error occurred while approving requests.');
+  }
 });
 
 // Master Pending Approvals
@@ -4064,6 +4390,121 @@ bot.action('wo_stats', async (ctx) => {
   } catch (error) {
     console.error('Error loading work order stats:', error);
     await ctx.reply('⚠️ An error occurred while loading statistics.');
+  }
+});
+
+// === User Registration System ===
+bot.action('register_user', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const user = await getUser(ctx);
+    
+    // Check if user is already registered
+    const existingMembership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, status: 'active' }
+    });
+    
+    if (existingMembership) {
+      return ctx.reply('⚠️ You are already registered as an active member in a facility.');
+    }
+    
+    // Start registration flow
+    flows.set(ctx.from.id, { 
+      flow: 'register_user', 
+      step: 1, 
+      data: { role: 'user' }, 
+      ts: Date.now() 
+    });
+    
+    await ctx.reply(
+      '👤 **User Registration**\n\n' +
+      'You are registering as a **User**.\n\n' +
+      '**User Permissions:**\n' +
+      '• Submit maintenance requests\n' +
+      '• View your own requests\n' +
+      '• Receive notifications\n\n' +
+      'Please enter your **full name**:'
+    );
+  } catch (error) {
+    console.error('Error starting user registration:', error);
+    await ctx.reply('⚠️ An error occurred while starting registration.');
+  }
+});
+
+bot.action('register_technician', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const user = await getUser(ctx);
+    
+    // Check if user is already registered
+    const existingMembership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, status: 'active' }
+    });
+    
+    if (existingMembership) {
+      return ctx.reply('⚠️ You are already registered as an active member in a facility.');
+    }
+    
+    // Start registration flow
+    flows.set(ctx.from.id, { 
+      flow: 'register_technician', 
+      step: 1, 
+      data: { role: 'technician' }, 
+      ts: Date.now() 
+    });
+    
+    await ctx.reply(
+      '🔧 **Technician Registration**\n\n' +
+      'You are registering as a **Technician**.\n\n' +
+      '**Technician Permissions:**\n' +
+      '• Submit maintenance requests\n' +
+      '• Execute assigned work orders\n' +
+      '• Update work order status\n' +
+      '• View assigned tasks\n\n' +
+      'Please enter your **full name**:'
+    );
+  } catch (error) {
+    console.error('Error starting technician registration:', error);
+    await ctx.reply('⚠️ An error occurred while starting registration.');
+  }
+});
+
+bot.action('register_supervisor', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const user = await getUser(ctx);
+    
+    // Check if user is already registered
+    const existingMembership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, status: 'active' }
+    });
+    
+    if (existingMembership) {
+      return ctx.reply('⚠️ You are already registered as an active member in a facility.');
+    }
+    
+    // Start registration flow
+    flows.set(ctx.from.id, { 
+      flow: 'register_supervisor', 
+      step: 1, 
+      data: { role: 'supervisor' }, 
+      ts: Date.now() 
+    });
+    
+    await ctx.reply(
+      '👨‍💼 **Supervisor Registration**\n\n' +
+      'You are registering as a **Supervisor**.\n\n' +
+      '**Supervisor Permissions:**\n' +
+      '• Submit maintenance requests\n' +
+      '• Review and manage work orders\n' +
+      '• Access reports and statistics\n' +
+      '• Monitor team performance\n' +
+      '• Assign tasks to technicians\n\n' +
+      'Please enter your **full name**:'
+    );
+  } catch (error) {
+    console.error('Error starting supervisor registration:', error);
+    await ctx.reply('⚠️ An error occurred while starting registration.');
   }
 });
 
