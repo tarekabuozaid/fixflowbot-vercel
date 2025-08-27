@@ -935,53 +935,119 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
 // Handle plan selection during facility registration
 bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const flowState = flows.get(ctx.from.id);
-  if (!flowState || flowState.flow !== 'reg_fac') return;
-  flowState.data.plan = ctx.match[1];
-  // Create facility in DB
-  const user = await ensureUser(ctx);
-  const data = flowState.data;
-  const facility = await prisma.$transaction(async (tx) => {
-    const f = await tx.facility.create({
-      data: {
-        name: data.name,
-        city: data.city,
-        phone: data.phone,
-        isActive: false,
-        isDefault: false,
-        planTier: data.plan
+  
+  try {
+    const flowState = flows.get(ctx.from.id);
+    if (!flowState || flowState.flow !== 'reg_fac') {
+      return ctx.reply('⚠️ Invalid registration flow. Please start over.');
+    }
+    
+    flowState.data.plan = ctx.match[1];
+    const user = await ensureUser(ctx);
+    const data = flowState.data;
+    
+    // Validate required fields
+    if (!data.name || !data.city || !data.phone) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('⚠️ Missing required facility information. Please start over.');
+    }
+    
+    // Check if facility name already exists
+    const existingFacility = await prisma.facility.findUnique({
+      where: { name: data.name }
+    });
+    
+    if (existingFacility) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('⚠️ A facility with this name already exists. Please choose a different name.');
+    }
+    
+    console.log('Creating facility with data:', data);
+    
+    const facility = await prisma.$transaction(async (tx) => {
+      const f = await tx.facility.create({
+        data: {
+          name: data.name,
+          city: data.city,
+          phone: data.phone,
+          status: 'pending',
+          isDefault: false,
+          planTier: data.plan
+        }
+      });
+      
+      await tx.facilityMember.create({
+        data: { 
+          userId: user.id, 
+          facilityId: f.id, 
+          role: 'facility_admin',
+          status: 'active',
+          joinedAt: new Date()
+        }
+      });
+      
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          activeFacilityId: f.id,
+          status: 'active'
+        }
+      });
+      
+      return f;
+    });
+    
+    flows.delete(ctx.from.id);
+    
+    await ctx.reply(
+      `✅ **Facility Registration Successful!**\n\n` +
+      `🏢 **Facility Details:**\n` +
+      `• Name: ${facility.name}\n` +
+      `• City: ${data.city}\n` +
+      `• Phone: ${data.phone}\n` +
+      `• Plan: ${data.plan}\n` +
+      `• Status: Pending Approval\n\n` +
+      `⏳ **Next Steps:**\n` +
+      `The facility administrator will review and approve your request soon.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]]
+        }
       }
-    });
-    await tx.facilityMember.create({
-      data: { userId: user.id, facilityId: f.id, role: 'facility_admin' }
-    });
-    await tx.user.update({
-      where: { id: user.id },
-      data: {
-        activeFacilityId: f.id,
-        requestedRole: 'facility_admin'
+    );
+    
+    // Notify master
+    if (MASTER_ID) {
+      try {
+        await bot.telegram.sendMessage(
+          MASTER_ID,
+          `🏢 **New Facility Request**\n\n` +
+          `📝 **Details:**\n` +
+          `• Name: ${facility.name}\n` +
+          `• City: ${data.city}\n` +
+          `• Phone: ${data.phone}\n` +
+          `• Plan: ${data.plan}\n` +
+          `• ID: ${facility.id.toString()}\n` +
+          `• Owner: ${ctx.from.id}\n\n` +
+          `Use Master Panel to approve.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (err) {
+        console.error('Failed to notify master:', err);
       }
-    });
-    return f;
-  });
-  flows.delete(ctx.from.id);
-  await ctx.reply(
-    `✅ Facility registration submitted!\n` +
-    `• Name: ${facility.name}\n` +
-    `• City: ${data.city}\n` +
-    `• Phone: ${data.phone}\n` +
-    `• Plan: ${data.plan}\n` +
-    `• Status: pending (awaiting activation)`
-  );
-  // Notify master
-  if (MASTER_ID) {
-    try {
-      await bot.telegram.sendMessage(
-        MASTER_ID,
-        `🏢 New facility request\n• Name: ${facility.name}\n• City: ${data.city}\n• Phone: ${data.phone}\n• Plan: ${data.plan}\n• ID: ${facility.id.toString()}\n• Owner: ${ctx.from.id}`
-      );
-    } catch (err) {
-      console.error('Failed to notify master', err);
+    }
+    
+  } catch (error) {
+    console.error('Error in facility registration:', error);
+    flows.delete(ctx.from.id);
+    
+    if (error.code === 'P2002') {
+      await ctx.reply('⚠️ A facility with this name already exists. Please choose a different name.');
+    } else if (error.code === 'P2003') {
+      await ctx.reply('⚠️ Invalid data provided. Please check your facility information.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while creating the facility. Please try again.');
     }
   }
 });

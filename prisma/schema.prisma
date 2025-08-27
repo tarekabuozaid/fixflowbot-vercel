@@ -34,8 +34,7 @@ model Facility {
   city          String?
   phone         String?
   isDefault     Boolean         @default(false)
-  isActive      Boolean         @default(false)
-  status        String          @default("active")
+  status        String          @default("pending")
   planTier      PlanTier        @default(Free)
   createdAt     DateTime        @default(now())
   members       FacilityMember[]
