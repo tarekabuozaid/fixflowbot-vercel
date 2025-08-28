@@ -31,8 +31,8 @@ const prisma = new PrismaClient({
 
 // Rate limiting per user (requests per minute)
 const rateLimit = new Map();
-const RATE_LIMIT = 30; // requests per minute
-const RATE_LIMIT_WINDOW = 60000; // 1 minute in milliseconds
+const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30; // requests per minute
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000; // 1 minute in milliseconds
 
 // Input sanitization function
 function sanitizeInput(input, maxLength = 1000) {
@@ -87,6 +87,8 @@ async function authenticateUser(ctx) {
     const tgId = BigInt(userId);
     let user = await prisma.user.findUnique({ where: { tgId } });
     
+    let isNew = false;
+    
     if (!user) {
       // Create new user with sanitized data
       const firstName = sanitizeInput(ctx.from.first_name || '', 50);
@@ -103,10 +105,11 @@ async function authenticateUser(ctx) {
         }
       });
       
+      isNew = true;
       console.log(`🔐 New user created: ${userId} (${firstName || 'Unknown'})`);
     }
     
-    return { user, isNew: false };
+    return { user, isNew };
   } catch (error) {
     console.error('Authentication error:', error);
     throw error;
@@ -218,6 +221,124 @@ function validateMasterAccess(ctx) {
   return true;
 }
 
+// Plan limits and validation
+const PLAN_LIMITS = {
+  Free: {
+    members: 5,
+    workOrders: 50,
+    reports: 3,
+    reminders: 10
+  },
+  Pro: {
+    members: 20,
+    workOrders: 200,
+    reports: 15,
+    reminders: 50
+  },
+  Business: {
+    members: 100,
+    workOrders: 1000,
+    reports: 100,
+    reminders: 200
+  }
+};
+
+// Check plan limits
+async function checkPlanLimit(facilityId, action, count = 1) {
+  try {
+    const facility = await prisma.facility.findUnique({
+      where: { id: facilityId }
+    });
+    
+    if (!facility) {
+      throw new Error('Facility not found');
+    }
+    
+    const plan = facility.planTier || 'Free';
+    const limits = PLAN_LIMITS[plan];
+    
+    if (!limits) {
+      throw new Error('Invalid plan');
+    }
+    
+    let currentCount = 0;
+    
+    switch (action) {
+      case 'members':
+        currentCount = await prisma.facilityMember.count({
+          where: { facilityId }
+        });
+        break;
+      case 'workOrders':
+        currentCount = await prisma.workOrder.count({
+          where: { facilityId }
+        });
+        break;
+      case 'reports':
+        currentCount = await prisma.report.count({
+          where: { facilityId }
+        });
+        break;
+      case 'reminders':
+        currentCount = await prisma.reminder.count({
+          where: { facilityId }
+        });
+        break;
+      default:
+        throw new Error('Invalid action');
+    }
+    
+    const newTotal = currentCount + count;
+    const limit = limits[action];
+    
+    if (newTotal > limit) {
+      throw new Error(`${action} limit exceeded for ${plan} plan. Limit: ${limit}, Current: ${currentCount}, Requested: ${count}`);
+    }
+    
+    return { allowed: true, current: currentCount, limit, plan };
+  } catch (error) {
+    console.error('Plan limit check error:', error);
+    throw error;
+  }
+}
+
+// Get plan info
+async function getPlanInfo(facilityId) {
+  try {
+    const facility = await prisma.facility.findUnique({
+      where: { id: facilityId }
+    });
+    
+    if (!facility) {
+      throw new Error('Facility not found');
+    }
+    
+    const plan = facility.planTier || 'Free';
+    const limits = PLAN_LIMITS[plan];
+    
+    const [members, workOrders, reports, reminders] = await Promise.all([
+      prisma.facilityMember.count({ where: { facilityId } }),
+      prisma.workOrder.count({ where: { facilityId } }),
+      prisma.report.count({ where: { facilityId } }),
+      prisma.reminder.count({ where: { facilityId } })
+    ]);
+    
+    return {
+      plan,
+      limits,
+      usage: {
+        members,
+        workOrders,
+        reports,
+        reminders
+      }
+    };
+  } catch (error) {
+    console.error('Get plan info error:', error);
+    throw error;
+  }
+}
+
 // Input validation helpers
 function validateEmail(email) {
   if (!email) return null;
@@ -258,9 +379,38 @@ bot.catch((err, ctx) => {
 // Start command handler with security validation
 bot.command('start', async (ctx) => {
   try {
-    const { user } = await authenticateUser(ctx);
+    const { user, isNew } = await authenticateUser(ctx);
     console.log(`✅ Start command received from: ${user.tgId} (${user.firstName})`);
-    await showMainMenu(ctx);
+    
+    if (isNew) {
+      await ctx.reply(
+        `🎉 **Welcome to FixFlow!**\n\n` +
+        `👋 Hello ${user.firstName || 'there'}!\n\n` +
+        `🔧 **FixFlow** is your comprehensive maintenance management solution.\n\n` +
+        `**What you can do:**\n` +
+        `• Submit maintenance requests\n` +
+        `• Track work orders\n` +
+        `• Receive notifications\n` +
+        `• Access reports and analytics\n\n` +
+        `**Next Steps:**\n` +
+        `1. Register a facility or join an existing one\n` +
+        `2. Start managing your maintenance tasks\n` +
+        `3. Explore all features\n\n` +
+        `Let's get started! 🚀`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🏢 Register Facility', callback_data: 'reg_fac_start' }],
+              [{ text: '🔗 Join Facility', callback_data: 'join_fac_start' }],
+              [{ text: '📖 Help', callback_data: 'help' }]
+            ]
+          }
+        }
+      );
+    } else {
+      await showMainMenu(ctx);
+    }
   } catch (error) {
     console.error('Error in start command:', error);
     if (error.message.includes('Rate limit')) {
@@ -675,6 +825,14 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
       }
     });
     
+    // Check plan limits before creating membership
+    try {
+      await checkPlanLimit(facilityId, 'members', 1);
+    } catch (error) {
+      flows.delete(user.tgId.toString());
+      return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
+    }
+    
     // Create membership request
     const membership = await prisma.facilityMember.create({
       data: {
@@ -755,24 +913,49 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
   }
 });
 
+// Legacy join_fac handler - redirect to proper registration flow
 bot.action(/join_fac\|(\d+)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const facId = BigInt(ctx.match[1]);
-  const user = await ensureUser(ctx);
-  // Create switch request
-  await prisma.facilitySwitchRequest.create({
-    data: { 
-      userId: user.id, 
-      facilityId: facId, 
-      requestedRole: 'user',
-      status: 'pending' 
+  try {
+    const { user } = await authenticateUser(ctx);
+    
+    // Check if user is already registered
+    const existingMembership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, status: 'active' }
+    });
+    
+    if (existingMembership) {
+      return ctx.reply('⚠️ You are already registered as an active member in a facility.');
     }
-  });
-  // Notify master
-  if (MASTER_ID) {
-    await bot.telegram.sendMessage(MASTER_ID, `🆕 User ${ctx.from.id} requested to join facility #${facId.toString()}`);
+    
+    // Redirect to user registration flow
+    flows.set(user.tgId.toString(), { 
+      flow: 'register_user', 
+      step: 1, 
+      data: {}, 
+      userId: user.tgId.toString(),
+      timestamp: Date.now() 
+    });
+    
+    await ctx.reply(
+      '👤 **User Registration**\n\n' +
+      'You are registering as a **User**.\n\n' +
+      '**User Permissions:**\n' +
+      '• Submit maintenance requests\n' +
+      '• View your own requests\n' +
+      '• Receive notifications\n\n' +
+      '**Registration Steps:**\n' +
+      '1. Full Name\n' +
+      '2. Email (optional)\n' +
+      '3. Phone Number (optional)\n' +
+      '4. Job Title (optional)\n' +
+      '5. Select Facility\n\n' +
+      'Please enter your **full name**:'
+    );
+  } catch (error) {
+    console.error('Error in legacy join_fac handler:', error);
+    await ctx.reply('⚠️ An error occurred. Please try again.');
   }
-  await ctx.reply('✅ Your join request has been submitted and is pending approval.');
 });
 
 // Switch to facility handler
@@ -1291,6 +1474,14 @@ bot.on('text', async (ctx, next) => {
           
           flowState.data.description = sanitizedDescription;
           flows.set(user.tgId.toString(), flowState);
+          
+          // Check plan limits before creating work order
+          try {
+            await checkPlanLimit(user.activeFacilityId, 'workOrders', 1);
+          } catch (error) {
+            flows.delete(user.tgId.toString());
+            return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
+          }
           
           // Create work order
           try {
@@ -2338,16 +2529,24 @@ bot.action('facility_dashboard', async (ctx) => {
       [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
     ];
     
+    // Get plan information
+    const planInfo = await getPlanInfo(user.activeFacilityId);
+    
     const dashboardMessage = 
       `🏢 **Facility Dashboard**\n\n` +
       `📋 **${facility.name}**\n` +
       `📍 ${facility.city || 'No city'}\n` +
       `📞 ${facility.phone || 'No phone'}\n` +
-      `💼 ${facility.planTier || 'No plan'}\n\n` +
+      `💼 **Plan:** ${planInfo.plan}\n\n` +
       `📊 **Quick Stats:**\n` +
-      `👥 Members: ${totalMembers}\n` +
-      `📋 Total Work Orders: ${totalWorkOrders}\n` +
-      `🔵 Open Orders: ${openWorkOrders}`;
+      `👥 Members: ${totalMembers}/${planInfo.limits.members}\n` +
+      `📋 Total Work Orders: ${totalWorkOrders}/${planInfo.limits.workOrders}\n` +
+      `🔵 Open Orders: ${openWorkOrders}\n\n` +
+      `📈 **Plan Usage:**\n` +
+      `👥 Members: ${planInfo.usage.members}/${planInfo.limits.members}\n` +
+      `📋 Work Orders: ${planInfo.usage.workOrders}/${planInfo.limits.workOrders}\n` +
+      `📊 Reports: ${planInfo.usage.reports}/${planInfo.limits.reports}\n` +
+      `⏰ Reminders: ${planInfo.usage.reminders}/${planInfo.limits.reminders}`;
     
     await ctx.reply(dashboardMessage, {
       reply_markup: { inline_keyboard: buttons }
@@ -3895,6 +4094,37 @@ bot.action(/reminder_view\|(\d+)/, async (ctx) => {
     console.error('Error viewing reminder:', error);
     await ctx.reply('⚠️ An error occurred while viewing reminder.');
   }
+});
+
+// Help handler
+bot.action('help', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  const helpMessage = 
+    `📖 **FixFlow Help Guide**\n\n` +
+    `🔧 **Main Features:**\n` +
+    `• **Work Orders:** Create and manage maintenance requests\n` +
+    `• **Member Management:** Add and manage facility members\n` +
+    `• **Reports:** Generate detailed analytics and reports\n` +
+    `• **Notifications:** Smart alerts and reminders\n` +
+    `• **Role Management:** Assign different roles to members\n\n` +
+    `👥 **User Roles:**\n` +
+    `• **User:** Submit requests, view own orders\n` +
+    `• **Technician:** Execute work orders, update status\n` +
+    `• **Supervisor:** Manage orders, access reports\n` +
+    `• **Facility Admin:** Full facility management\n\n` +
+    `💼 **Plans:**\n` +
+    `• **Free:** 5 members, 50 work orders\n` +
+    `• **Pro:** 20 members, 200 work orders\n` +
+    `• **Business:** 100 members, 1000 work orders\n\n` +
+    `📞 **Support:** Contact your facility administrator for assistance.`;
+  
+  await ctx.reply(helpMessage, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]]
+    }
+  });
 });
 
 // Back to menu handler
