@@ -103,7 +103,7 @@ async function authenticateUser(ctx) {
         }
       });
       
-      console.log(`🔐 New user created: ${userId} (${firstName})`);
+      console.log(`🔐 New user created: ${userId} (${firstName || 'Unknown'})`);
     }
     
     return { user, isNew: false };
@@ -467,8 +467,12 @@ bot.command('members', async (ctx) => {
         'user': '👤'
       };
       
-      const displayName = sanitizeInput(m.user.firstName || `User ${m.user.tgId?.toString() || m.user.id.toString()}`, 30);
-      memberList += `${index + 1}. ${roleEmoji[m.role]} ${displayName}\n`;
+      const firstName = m.user.firstName || `User ${m.user.tgId?.toString() || m.user.id.toString()}`;
+      const fullName = m.user.lastName ? `${firstName} ${m.user.lastName}` : firstName;
+      const displayName = sanitizeInput(fullName, 30);
+      const jobTitle = m.user.jobTitle ? ` - ${m.user.jobTitle}` : '';
+      
+      memberList += `${index + 1}. ${roleEmoji[m.role]} ${displayName}${jobTitle}\n`;
       memberList += `   Role: ${m.role.replace('_', ' ').toUpperCase()}\n`;
       memberList += `   Status: ${m.user.status}\n\n`;
     });
@@ -663,9 +667,11 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        firstName: flowState.data.fullName,
+        firstName: flowState.data.firstName,
+        lastName: flowState.data.lastName,
         email: flowState.data.email,
-        phone: flowState.data.phone
+        phone: flowState.data.phone,
+        jobTitle: flowState.data.jobTitle
       }
     });
     
@@ -706,7 +712,8 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
       `👤 **Role:** ${roleText[role]}\n` +
       `📝 **Name:** ${flowState.data.fullName}\n` +
       `📧 **Email:** ${flowState.data.email || 'Not provided'}\n` +
-      `📞 **Phone:** ${flowState.data.phone || 'Not provided'}\n\n` +
+      `📞 **Phone:** ${flowState.data.phone || 'Not provided'}\n` +
+      `💼 **Job Title:** ${flowState.data.jobTitle || 'Not provided'}\n\n` +
       `⏳ **Status:** Pending Approval\n\n` +
       `The facility administrator will review your request and approve it soon. You will receive a notification once approved.`,
       {
@@ -731,11 +738,12 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
         facilityId,
         'new_member_request',
         'New Member Request',
-        `New ${roleText[role]} registration request from ${flowState.data.fullName}`,
+        `New ${roleText[role]} registration request from ${flowState.data.fullName}${flowState.data.jobTitle ? ` (${flowState.data.jobTitle})` : ''}`,
         { 
           userId: user.id.toString(),
           facilityId: facilityId.toString(),
-          role: role
+          role: role,
+          jobTitle: flowState.data.jobTitle
         }
       );
     }
@@ -1058,6 +1066,10 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Name must be at least 2 characters. Try again or type /cancel to exit:');
           }
           
+          // Split name into first and last name
+          const nameParts = sanitizedName.split(' ');
+          flowState.data.firstName = nameParts[0];
+          flowState.data.lastName = nameParts.slice(1).join(' ') || null;
           flowState.data.fullName = sanitizedName;
           flowState.step = 2;
           flows.set(user.tgId.toString(), flowState);
@@ -1065,7 +1077,7 @@ bot.on('text', async (ctx, next) => {
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
             `✅ **Role:** ${roleText[flowState.flow]}\n\n` +
-            `📧 **Step 2/4: Enter your email address**\n` +
+            `📧 **Step 2/5: Enter your email address**\n` +
             `(Optional - type /skip to skip or /cancel to exit)`,
             { parse_mode: 'Markdown' }
           );
@@ -1129,6 +1141,40 @@ bot.on('text', async (ctx, next) => {
           flowState.step = 4;
           flows.set(user.tgId.toString(), flowState);
           
+          return ctx.reply(
+            `✅ **Full Name:** ${flowState.data.fullName}\n` +
+            `✅ **Role:** ${roleText[flowState.flow]}\n` +
+            `✅ **Email:** ${flowState.data.email || 'Not provided'}\n` +
+            `✅ **Phone:** ${flowState.data.phone || 'Not provided'}\n\n` +
+            `💼 **Step 4/5: Enter your job title**\n` +
+            `(e.g., Maintenance Technician, Facility Manager, etc.)\n` +
+            `(Optional - type /skip to skip or /cancel to exit)`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+        
+        // Step 4: Job Title (optional)
+        if (flowState.step === 4) {
+          if (text.toLowerCase() === '/cancel') {
+            flows.delete(user.tgId.toString());
+            return ctx.reply('❌ User registration cancelled.', {
+              reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+            });
+          }
+          
+          if (text.toLowerCase() === '/skip') {
+            flowState.data.jobTitle = null;
+          } else {
+            const sanitizedJobTitle = sanitizeInput(text, 50);
+            if (sanitizedJobTitle.length < 2) {
+              return ctx.reply('⚠️ Job title must be at least 2 characters. Try again or type /skip to skip:');
+            }
+            flowState.data.jobTitle = sanitizedJobTitle;
+          }
+          
+          flowState.step = 5;
+          flows.set(user.tgId.toString(), flowState);
+          
           // Show facility selection
           const facilities = await prisma.facility.findMany({
             where: { status: 'active' },
@@ -1151,8 +1197,9 @@ bot.on('text', async (ctx, next) => {
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
             `✅ **Role:** ${roleText[flowState.flow]}\n` +
             `✅ **Email:** ${flowState.data.email || 'Not provided'}\n` +
-            `✅ **Phone:** ${flowState.data.phone || 'Not provided'}\n\n` +
-            `🏢 **Step 4/4: Select Facility to Join**\n\n` +
+            `✅ **Phone:** ${flowState.data.phone || 'Not provided'}\n` +
+            `✅ **Job Title:** ${flowState.data.jobTitle || 'Not provided'}\n\n` +
+            `🏢 **Step 5/5: Select Facility to Join**\n\n` +
             `Choose a facility to join:`,
             {
               parse_mode: 'Markdown',
@@ -2354,10 +2401,12 @@ bot.action('facility_members', async (ctx) => {
     
     const memberButtons = members.map(member => {
       const name = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
+      const fullName = member.user.lastName ? `${name} ${member.user.lastName}` : name;
       const role = roleEmoji[member.role] + ' ' + roleText[member.role];
+      const jobTitle = member.user.jobTitle ? ` - ${member.user.jobTitle}` : '';
       
       return [Markup.button.callback(
-        `${name} (${role})`,
+        `${fullName} (${role})${jobTitle}`,
         `member_view|${member.id.toString()}`
       )];
     });
@@ -2432,9 +2481,12 @@ bot.action(/member_view\|(\d+)/, async (ctx) => {
     
     const memberDetails = 
       `👤 **Member Details**\n\n` +
-      `📝 **Name:** ${member.user.firstName || 'Not set'}\n` +
+      `📝 **Name:** ${member.user.firstName || 'Not set'}${member.user.lastName ? ` ${member.user.lastName}` : ''}\n` +
       `🆔 **Telegram ID:** ${member.user.tgId?.toString() || 'Not set'}\n` +
       `${roleEmoji[member.role]} **Role:** ${roleText[member.role]}\n` +
+      `💼 **Job Title:** ${member.user.jobTitle || 'Not set'}\n` +
+      `📧 **Email:** ${member.user.email || 'Not set'}\n` +
+      `📞 **Phone:** ${member.user.phone || 'Not set'}\n` +
       `📋 **Work Orders:** ${memberWorkOrders}\n` +
       `📅 **Joined:** ${member.createdAt.toLocaleDateString()}`;
     
@@ -3339,8 +3391,10 @@ bot.action('report_members', async (ctx) => {
     
     const memberSection = memberActivity.map(member => {
       const name = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
+      const fullName = member.user.lastName ? `${name} ${member.user.lastName}` : name;
       const role = roleEmoji[member.role] + ' ' + roleText[member.role];
-      return `👤 **${name}** (${role})\n   📋 Total Orders: ${member.workOrdersCount}\n   📅 Recent (7d): ${member.recentActivity}`;
+      const jobTitle = member.user.jobTitle ? `\n   💼 ${member.user.jobTitle}` : '';
+      return `👤 **${fullName}** (${role})${jobTitle}\n   📋 Total Orders: ${member.workOrdersCount}\n   📅 Recent (7d): ${member.recentActivity}`;
     }).join('\n\n');
     
     const activityMessage = 
@@ -5191,6 +5245,12 @@ bot.action('register_user', async (ctx) => {
       '• Submit maintenance requests\n' +
       '• View your own requests\n' +
       '• Receive notifications\n\n' +
+      '**Registration Steps:**\n' +
+      '1. Full Name\n' +
+      '2. Email (optional)\n' +
+      '3. Phone Number (optional)\n' +
+      '4. Job Title (optional)\n' +
+      '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
   } catch (error) {
@@ -5229,6 +5289,12 @@ bot.action('register_technician', async (ctx) => {
       '• Execute assigned work orders\n' +
       '• Update work order status\n' +
       '• View assigned tasks\n\n' +
+      '**Registration Steps:**\n' +
+      '1. Full Name\n' +
+      '2. Email (optional)\n' +
+      '3. Phone Number (optional)\n' +
+      '4. Job Title (optional)\n' +
+      '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
   } catch (error) {
@@ -5268,6 +5334,12 @@ bot.action('register_supervisor', async (ctx) => {
       '• Access reports and statistics\n' +
       '• Monitor team performance\n' +
       '• Assign tasks to technicians\n\n' +
+      '**Registration Steps:**\n' +
+      '1. Full Name\n' +
+      '2. Email (optional)\n' +
+      '3. Phone Number (optional)\n' +
+      '4. Job Title (optional)\n' +
+      '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
   } catch (error) {

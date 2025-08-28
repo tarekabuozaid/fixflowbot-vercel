@@ -11,8 +11,11 @@ model User {
   id               BigInt          @id @default(autoincrement())
   tgId             BigInt?         @unique
   firstName        String?
+  lastName         String?         // إضافة لقب المستخدم
+  username         String?         // اسم المستخدم على تليجرام
   email            String?
   phone            String?
+  jobTitle         String?         // الوظيفة (مشرف، فني، مستخدم أو أي مسمى)
   status           UserStatus      @default(pending)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
