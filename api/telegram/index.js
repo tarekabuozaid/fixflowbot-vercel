@@ -27,152 +27,400 @@ const prisma = new PrismaClient({
   }
 });
 
-// Global error handler
+// ===== SECURITY & VALIDATION SYSTEM =====
+
+// Rate limiting per user (requests per minute)
+const rateLimit = new Map();
+const RATE_LIMIT = 30; // requests per minute
+const RATE_LIMIT_WINDOW = 60000; // 1 minute in milliseconds
+
+// Input sanitization function
+function sanitizeInput(input, maxLength = 1000) {
+  if (!input || typeof input !== 'string') return '';
+  
+  // Remove null bytes and control characters
+  let sanitized = input.replace(/[\x00-\x1F\x7F]/g, '');
+  
+  // Remove HTML tags
+  sanitized = sanitized.replace(/<[^>]*>/g, '');
+  
+  // Remove script tags and dangerous patterns
+  sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  sanitized = sanitized.replace(/javascript:/gi, '');
+  sanitized = sanitized.replace(/on\w+\s*=/gi, '');
+  
+  // Limit length
+  if (sanitized.length > maxLength) {
+    sanitized = sanitized.substring(0, maxLength);
+  }
+  
+  return sanitized.trim();
+}
+
+// User authentication and validation
+async function authenticateUser(ctx) {
+  try {
+    // Validate Telegram user data
+    if (!ctx.from || !ctx.from.id) {
+      throw new Error('Invalid user data');
+    }
+    
+    const userId = ctx.from.id;
+    
+    // Rate limiting check
+    const now = Date.now();
+    const userRateLimit = rateLimit.get(userId) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+    
+    if (now > userRateLimit.resetTime) {
+      userRateLimit.count = 0;
+      userRateLimit.resetTime = now + RATE_LIMIT_WINDOW;
+    }
+    
+    if (userRateLimit.count >= RATE_LIMIT) {
+      throw new Error('Rate limit exceeded');
+    }
+    
+    userRateLimit.count++;
+    rateLimit.set(userId, userRateLimit);
+    
+    // Get or create user from database
+    const tgId = BigInt(userId);
+    let user = await prisma.user.findUnique({ where: { tgId } });
+    
+    if (!user) {
+      // Create new user with sanitized data
+      const firstName = sanitizeInput(ctx.from.first_name || '', 50);
+      const lastName = sanitizeInput(ctx.from.last_name || '', 50);
+      const username = sanitizeInput(ctx.from.username || '', 32);
+      
+      user = await prisma.user.create({
+        data: { 
+          tgId, 
+          firstName: firstName || null,
+          lastName: lastName || null,
+          username: username || null,
+          status: 'pending' 
+        }
+      });
+      
+      console.log(`🔐 New user created: ${userId} (${firstName})`);
+    }
+    
+    return { user, isNew: false };
+  } catch (error) {
+    console.error('Authentication error:', error);
+    throw error;
+  }
+}
+
+// Facility access validation
+async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
+  try {
+    const { user } = await authenticateUser(ctx);
+    
+    if (!facilityId) {
+      throw new Error('Facility ID required');
+    }
+    
+    // Validate facility ID format
+    const facilityIdBigInt = BigInt(facilityId);
+    
+    // Check if facility exists and is active
+    const facility = await prisma.facility.findUnique({
+      where: { id: facilityIdBigInt }
+    });
+    
+    if (!facility) {
+      throw new Error('Facility not found');
+    }
+    
+    if (facility.status !== 'active') {
+      throw new Error('Facility is inactive');
+    }
+    
+    // Check user membership
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: facilityIdBigInt,
+        status: 'active'
+      }
+    });
+    
+    if (!membership) {
+      throw new Error('User not a member of this facility');
+    }
+    
+    // Check role requirements if specified
+    if (requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
+      throw new Error('Insufficient permissions');
+    }
+    
+    return { user, facility, membership };
+  } catch (error) {
+    console.error('Facility access validation error:', error);
+    throw error;
+  }
+}
+
+// Work order access validation
+async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
+  try {
+    const { user } = await authenticateUser(ctx);
+    
+    if (!workOrderId) {
+      throw new Error('Work order ID required');
+    }
+    
+    // Validate work order ID format
+    const workOrderIdBigInt = BigInt(workOrderId);
+    
+    // Get work order with facility info
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderIdBigInt },
+      include: { facility: true }
+    });
+    
+    if (!workOrder) {
+      throw new Error('Work order not found');
+    }
+    
+    // Check user membership in the facility
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: workOrder.facilityId,
+        status: 'active'
+      }
+    });
+    
+    if (!membership) {
+      throw new Error('User not a member of this facility');
+    }
+    
+    // Check role requirements if specified
+    if (requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
+      throw new Error('Insufficient permissions for this operation');
+    }
+    
+    return { user, workOrder, membership };
+  } catch (error) {
+    console.error('Work order access validation error:', error);
+    throw error;
+  }
+}
+
+// Master access validation
+function validateMasterAccess(ctx) {
+  if (!isMaster(ctx)) {
+    throw new Error('Master access required');
+  }
+  return true;
+}
+
+// Input validation helpers
+function validateEmail(email) {
+  if (!email) return null;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email) ? email : null;
+}
+
+function validatePhone(phone) {
+  if (!phone) return null;
+  // Remove all non-digit characters
+  const cleanPhone = phone.replace(/\D/g, '');
+  // Check if it's a valid phone number (7-15 digits)
+  return cleanPhone.length >= 7 && cleanPhone.length <= 15 ? cleanPhone : null;
+}
+
+function validateName(name) {
+  if (!name) return null;
+  const sanitized = sanitizeInput(name, 50);
+  return sanitized.length >= 2 ? sanitized : null;
+}
+
+// Global error handler with security logging
 bot.catch((err, ctx) => {
-  console.error('Bot error:', err);
+  const userId = ctx.from?.id || 'unknown';
+  const username = ctx.from?.username || 'unknown';
+  const chatId = ctx.chat?.id || 'unknown';
+  
+  console.error(`🚨 Security Error - User: ${userId} (@${username}), Chat: ${chatId}, Error:`, err);
+  
+  // Log security events
+  if (err.message.includes('Rate limit') || err.message.includes('Invalid user') || err.message.includes('Insufficient permissions')) {
+    console.warn(`🔒 Security Event - User ${userId} attempted unauthorized access`);
+  }
+  
   ctx.reply('⚠️ An error occurred. Please try again.').catch(() => {});
 });
 
-// Start command handler
+// Start command handler with security validation
 bot.command('start', async (ctx) => {
   try {
-    console.log('✅ Start command received from:', ctx.from.id);
+    const { user } = await authenticateUser(ctx);
+    console.log(`✅ Start command received from: ${user.tgId} (${user.firstName})`);
     await showMainMenu(ctx);
   } catch (error) {
     console.error('Error in start command:', error);
-    await ctx.reply('⚠️ An error occurred while starting the bot. Please try again.');
+    if (error.message.includes('Rate limit')) {
+      await ctx.reply('⚠️ Too many requests. Please wait a moment and try again.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while starting the bot. Please try again.');
+    }
   }
 });
 
-// In-memory flow state per user
-// Each entry: { flow: string, step: number|string, data: object }
+// In-memory flow state per user with security
+// Each entry: { flow: string, step: number|string, data: object, userId: string, timestamp: number }
 const flows = new Map();
 
-// Helpers
+// Clean up old flows (older than 1 hour)
+setInterval(() => {
+  const now = Date.now();
+  const oneHour = 60 * 60 * 1000;
+  for (const [userId, flow] of flows.entries()) {
+    if (now - flow.timestamp > oneHour) {
+      flows.delete(userId);
+    }
+  }
+}, 30 * 60 * 1000); // Check every 30 minutes
+
+// Helpers with security
 const isMaster = (ctx) => String(ctx.from?.id || '') === String(MASTER_ID);
 
+// Secure user management functions
 async function ensureUser(ctx) {
-  const tgId = BigInt(ctx.from.id);
-  let user = await prisma.user.findUnique({ where: { tgId } });
-  if (!user) {
-    user = await prisma.user.create({
-      data: { tgId, firstName: ctx.from.first_name ?? null, status: 'pending' }
-    });
-  }
+  const { user } = await authenticateUser(ctx);
   return user;
 }
 
 async function getUser(ctx) {
-  const tgId = BigInt(ctx.from.id);
-  let user = await prisma.user.findUnique({ where: { tgId } });
-  if (!user) {
-    user = await prisma.user.create({
-      data: { tgId, firstName: ctx.from.first_name ?? null, status: 'pending' }
-    });
-  }
+  const { user } = await authenticateUser(ctx);
   return user;
 }
 
 async function showMainMenu(ctx) {
   try {
-    const user = await ensureUser(ctx);
+    const { user } = await authenticateUser(ctx);
     const buttons = [];
     
     if (user.status === 'active' && user.activeFacilityId) {
-    buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
-    buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
-    
-    // Check if user is facility admin or supervisor
-    const membership = await prisma.facilityMember.findFirst({
-      where: { 
-        userId: user.id, 
-        facilityId: user.activeFacilityId,
-        role: { in: ['facility_admin', 'supervisor'] }
-      }
-    });
-    
-    if (membership) {
-      buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
-      buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
+      buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
+      buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
       
-      // Add role management for facility admins
-      if (membership && membership.role === 'facility_admin') {
-        buttons.push([Markup.button.callback('👥 Manage Members', 'manage_members')]);
-        buttons.push([Markup.button.callback('🔐 Role Management', 'role_management')]);
+      // Check if user is facility admin or supervisor
+      const membership = await prisma.facilityMember.findFirst({
+        where: { 
+          userId: user.id, 
+          facilityId: user.activeFacilityId,
+          status: 'active',
+          role: { in: ['facility_admin', 'supervisor'] }
+        }
+      });
+      
+      if (membership) {
+        buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
+        buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
+        
+        // Add role management for facility admins
+        if (membership.role === 'facility_admin') {
+          buttons.push([Markup.button.callback('👥 Manage Members', 'manage_members')]);
+          buttons.push([Markup.button.callback('🔐 Role Management', 'role_management')]);
+        }
       }
-    }
-    
-    // Add user registration options
-    buttons.push([Markup.button.callback('👤 Register as User', 'register_user')]);
-    buttons.push([Markup.button.callback('🔧 Register as Technician', 'register_technician')]);
-    buttons.push([Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')]);
-    
-    // Add notifications button
-    const unreadCount = await prisma.notification.count({
-      where: { userId: user.id, isRead: false }
-    });
-    
-    const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
-    buttons.push([Markup.button.callback(notificationText, 'notifications')]);
-    
-    // Add smart notifications button for admins
-    if (membership) {
-      buttons.push([Markup.button.callback('🤖 Smart Alerts', 'smart_notifications')]);
-    }
-    
-    // Add reminders button
-    const activeReminders = await prisma.reminder.count({
-      where: { 
-        facilityId: user.activeFacilityId,
-        isActive: true,
-        scheduledFor: { gte: new Date() }
+      
+      // Add user registration options
+      buttons.push([Markup.button.callback('👤 Register as User', 'register_user')]);
+      buttons.push([Markup.button.callback('🔧 Register as Technician', 'register_technician')]);
+      buttons.push([Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')]);
+      
+      // Add notifications button
+      const unreadCount = await prisma.notification.count({
+        where: { userId: user.id, isRead: false }
+      });
+      
+      const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
+      buttons.push([Markup.button.callback(notificationText, 'notifications')]);
+      
+      // Add smart notifications button for admins
+      if (membership) {
+        buttons.push([Markup.button.callback('🤖 Smart Alerts', 'smart_notifications')]);
       }
-    });
-    
-    const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
-    buttons.push([Markup.button.callback(reminderText, 'reminders')]);
-    
-    // Add reports button for admins
-    if (membership) {
-      buttons.push([Markup.button.callback('📊 Advanced Reports', 'advanced_reports')]);
+      
+      // Add reminders button
+      const activeReminders = await prisma.reminder.count({
+        where: { 
+          facilityId: user.activeFacilityId,
+          isActive: true,
+          scheduledFor: { gte: new Date() }
+        }
+      });
+      
+      const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
+      buttons.push([Markup.button.callback(reminderText, 'reminders')]);
+      
+      // Add reports button for admins
+      if (membership) {
+        buttons.push([Markup.button.callback('📊 Advanced Reports', 'advanced_reports')]);
+      }
+    } else {
+      buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
+      buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
     }
-  } else {
-    buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
-    buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
-  }
-  if (isMaster(ctx)) {
-    buttons.push([Markup.button.callback('🛠 Master Panel', 'master_panel')]);
-    buttons.push([Markup.button.callback('👑 Master Dashboard', 'master_dashboard')]);
-  }
-  await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
-    reply_markup: { inline_keyboard: buttons }
-  });
+    
+    if (isMaster(ctx)) {
+      buttons.push([Markup.button.callback('🛠 Master Panel', 'master_panel')]);
+      buttons.push([Markup.button.callback('👑 Master Dashboard', 'master_dashboard')]);
+    }
+    
+    await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
+      reply_markup: { inline_keyboard: buttons }
+    });
   } catch (error) {
     console.error('Error in showMainMenu:', error);
-    await ctx.reply('⚠️ An error occurred while loading the menu. Please try again.');
+    if (error.message.includes('Rate limit')) {
+      await ctx.reply('⚠️ Too many requests. Please wait a moment and try again.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while loading the menu. Please try again.');
+    }
   }
 }
 
 // Remove duplicate start handler - using bot.command('start') instead
 
-// === Official Commands ===
+// === Official Commands with Security ===
 bot.command('registerfacility', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  flows.set(ctx.from.id, { flow: 'reg_fac', step: 1, data: {}, ts: Date.now() });
-  await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
+  try {
+    const { user } = await authenticateUser(ctx);
+    flows.set(user.tgId.toString(), { 
+      flow: 'reg_fac', 
+      step: 1, 
+      data: {}, 
+      userId: user.tgId.toString(),
+      timestamp: Date.now() 
+    });
+    await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
+  } catch (error) {
+    console.error('Error in registerfacility command:', error);
+    await ctx.reply('⚠️ An error occurred. Please try again.');
+  }
 });
 
 bot.command('join', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  await requireMembershipOrList(ctx);
+  try {
+    await requireMembershipOrList(ctx);
+  } catch (error) {
+    console.error('Error in join command:', error);
+    await ctx.reply('⚠️ An error occurred. Please try again.');
+  }
 });
 
 bot.command('switch', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
   try {
-    const user = await ensureUser(ctx);
+    const { user } = await authenticateUser(ctx);
     const memberships = await prisma.facilityMember.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, status: 'active' },
       include: { facility: true },
       take: 10
     });
@@ -183,7 +431,7 @@ bot.command('switch', async (ctx) => {
     
     const buttons = memberships.map(m => [
       Markup.button.callback(
-        `${m.facility.name}${m.facility.id === user.activeFacilityId ? ' ✅' : ''}`,
+        `${sanitizeInput(m.facility.name, 30)}${m.facility.id === user.activeFacilityId ? ' ✅' : ''}`,
         `switch_to_${m.facility.id}`
       )
     ]);
@@ -201,16 +449,11 @@ bot.command('switch', async (ctx) => {
 });
 
 bot.command('members', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
   try {
-    const { user, member } = await requireActiveMembership(ctx);
-    
-    if (!member || !['facility_admin', 'supervisor'].includes(member.role)) {
-      return ctx.reply('⚠️ You need admin privileges to view facility members.');
-    }
+    const { user, facility, membership } = await validateFacilityAccess(ctx, null, ['facility_admin', 'supervisor']);
     
     const members = await prisma.facilityMember.findMany({
-      where: { facilityId: user.activeFacilityId },
+      where: { facilityId: facility.id, status: 'active' },
       include: { user: true },
       orderBy: { role: 'asc' }
     });
@@ -224,7 +467,8 @@ bot.command('members', async (ctx) => {
         'user': '👤'
       };
       
-      memberList += `${index + 1}. ${roleEmoji[m.role]} ${m.user.firstName || `User ${m.user.tgId?.toString() || m.user.id.toString()}`}\n`;
+      const displayName = sanitizeInput(m.user.firstName || `User ${m.user.tgId?.toString() || m.user.id.toString()}`, 30);
+      memberList += `${index + 1}. ${roleEmoji[m.role]} ${displayName}\n`;
       memberList += `   Role: ${m.role.replace('_', ' ').toUpperCase()}\n`;
       memberList += `   Status: ${m.user.status}\n\n`;
     });
@@ -240,15 +484,59 @@ bot.command('members', async (ctx) => {
     });
   } catch (error) {
     console.error('Error in members command:', error);
-    await ctx.reply('⚠️ An error occurred while loading members.');
+    if (error.message.includes('Insufficient permissions')) {
+      await ctx.reply('⚠️ You need admin privileges to view facility members.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while loading members.');
+    }
   }
 });
 
 bot.command('approve', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  if (!isMaster(ctx)) {
-    return ctx.reply('🚫 Only master can approve requests.');
+  try {
+    validateMasterAccess(ctx);
+    
+    const pendingRequests = await prisma.facilitySwitchRequest.findMany({
+      where: { status: 'pending' },
+      include: { 
+        user: true,
+        facility: true
+      },
+      orderBy: { requestDate: 'asc' }
+    });
+    
+    if (!pendingRequests.length) {
+      return ctx.reply('✅ No pending requests to approve.');
+    }
+    
+    let requestList = '📋 **Pending Requests**\n\n';
+    pendingRequests.forEach((req, index) => {
+      const displayName = sanitizeInput(req.user.firstName || `User ${req.user.tgId?.toString()}`, 30);
+      const facilityName = sanitizeInput(req.facility.name, 30);
+      requestList += `${index + 1}. ${displayName}\n`;
+      requestList += `   Facility: ${facilityName}\n`;
+      requestList += `   Role: ${req.requestedRole}\n`;
+      requestList += `   Date: ${req.requestDate.toLocaleDateString()}\n\n`;
+    });
+    
+    const buttons = [
+      [Markup.button.callback('✅ Approve All', 'master_approve_all_requests')],
+      [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(requestList, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in approve command:', error);
+    if (error.message.includes('Master access required')) {
+      await ctx.reply('🚫 Only master can approve requests.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while loading requests.');
+    }
   }
+});
   
   try {
     const [pendingFacilities, pendingRequests] = await Promise.all([
@@ -288,32 +576,39 @@ bot.command('approve', async (ctx) => {
     });
   } catch (error) {
     console.error('Error in approve command:', error);
-    await ctx.reply('⚠️ An error occurred while loading approvals.');
+    if (error.message.includes('Master access required')) {
+      await ctx.reply('🚫 Only master can approve requests.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while loading requests.');
+    }
   }
 });
 
 bot.command('deny', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  if (!isMaster(ctx)) {
-    return ctx.reply('🚫 Only master can deny requests.');
+  try {
+    validateMasterAccess(ctx);
+    await ctx.reply('❌ **Deny Requests**\n\nUse /approve to review and manage pending requests.');
+  } catch (error) {
+    console.error('Error in deny command:', error);
+    if (error.message.includes('Master access required')) {
+      await ctx.reply('🚫 Only master can deny requests.');
+    } else {
+      await ctx.reply('⚠️ An error occurred.');
+    }
   }
-  
-  await ctx.reply('❌ **Deny Requests**\n\nUse /approve to review and manage pending requests.');
 });
 
 bot.command('setrole', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
   try {
-    const { user, member } = await requireActiveMembership(ctx);
-    
-    if (!member || member.role !== 'facility_admin') {
-      return ctx.reply('⚠️ Only facility admins can set roles.');
-    }
-    
+    const { user, facility, membership } = await validateFacilityAccess(ctx, null, ['facility_admin']);
     await ctx.reply('👑 **Set Member Role**\n\nThis feature will be available soon!\n\nFor now, use the facility dashboard to manage members.');
   } catch (error) {
     console.error('Error in setrole command:', error);
-    await ctx.reply('⚠️ An error occurred while setting role.');
+    if (error.message.includes('Insufficient permissions')) {
+      await ctx.reply('⚠️ Only facility admins can set roles.');
+    } else {
+      await ctx.reply('⚠️ An error occurred while setting role.');
+    }
   }
 });
 
@@ -332,27 +627,60 @@ bot.action('join_fac_start', async (ctx) => {
 
 // Helper to list active facilities and allow user to select one
 async function requireMembershipOrList(ctx) {
-  // list active facilities
-      const facs = await prisma.facility.findMany({ where: { status: 'active' }, take: 20 });
-  if (!facs.length) {
-    return ctx.reply('⚠️ No active facilities available to join at this time.');
+  try {
+    const { user } = await authenticateUser(ctx);
+    
+    // List active facilities
+    const facs = await prisma.facility.findMany({ 
+      where: { status: 'active' }, 
+      take: 20,
+      orderBy: { name: 'asc' }
+    });
+    
+    if (!facs.length) {
+      return ctx.reply('⚠️ No active facilities available to join at this time.');
+    }
+    
+    const rows = facs.map(f => [
+      Markup.button.callback(
+        `${sanitizeInput(f.name, 30)}`, 
+        `join_fac|${f.id.toString()}`
+      )
+    ]);
+    
+    await ctx.reply('Please choose a facility to request membership:', { 
+      reply_markup: { inline_keyboard: rows } 
+    });
+  } catch (error) {
+    console.error('Error in requireMembershipOrList:', error);
+    await ctx.reply('⚠️ An error occurred while loading facilities.');
   }
-  const rows = facs.map(f => [Markup.button.callback(`${f.name}`, `join_fac|${f.id.toString()}`)]);
-  await ctx.reply('Please choose a facility to request membership:', { reply_markup: { inline_keyboard: rows } });
 }
 
 // Join facility with specific role
 bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
   try {
+    await ctx.answerCbQuery().catch(() => {});
+    const { user } = await authenticateUser(ctx);
+    
     const facilityId = BigInt(ctx.match[1]);
     const role = ctx.match[2];
-    const user = await getUser(ctx);
+    
+    // Validate role
+    if (!['user', 'technician', 'supervisor'].includes(role)) {
+      return ctx.reply('⚠️ Invalid role selected. Please try again.');
+    }
     
     // Get flow data
-    const flowState = flows.get(ctx.from.id);
+    const flowState = flows.get(user.tgId.toString());
     if (!flowState || !['register_user', 'register_technician', 'register_supervisor'].includes(flowState.flow)) {
       return ctx.reply('⚠️ Invalid registration flow. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (flowState.userId !== user.tgId.toString()) {
+      flows.delete(user.tgId.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
     // Check if facility exists and is active
@@ -605,12 +933,28 @@ async function requireActiveMembership(ctx) {
   return { user };
 }
 
-// === Flow Handler for free text responses ===
+// === Flow Handler for free text responses with security ===
 bot.on('text', async (ctx, next) => {
-  const flowState = flows.get(ctx.from.id);
-  if (!flowState) return next();
-  const text = (ctx.message.text || '').trim();
   try {
+    // Authenticate user first
+    const { user } = await authenticateUser(ctx);
+    
+    const flowState = flows.get(user.tgId.toString());
+    if (!flowState) return next();
+    
+    // Validate flow ownership
+    if (flowState.userId !== user.tgId.toString()) {
+      flows.delete(user.tgId.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    // Sanitize input
+    const text = sanitizeInput(ctx.message.text || '', 1000);
+    if (!text) {
+      return ctx.reply('⚠️ Invalid input. Please try again.');
+    }
+    
+    try {
     // === FACILITY REGISTRATION FLOW ===
     if (flowState.flow === 'reg_fac') {
       // Step 1: Facility Name
@@ -1044,22 +1388,39 @@ bot.on('text', async (ctx, next) => {
          });
        }
      }
-  } catch (e) {
-    console.error('FLOW_ERROR', e);
-    flows.delete(ctx.from.id);
-    return ctx.reply('⚠️ An error occurred. Please try again.');
+    } catch (e) {
+      console.error('FLOW_ERROR', e);
+      flows.delete(user.tgId.toString());
+      return ctx.reply('⚠️ An error occurred. Please try again.');
+    }
+  } catch (error) {
+    console.error('Text handler authentication error:', error);
+    if (error.message.includes('Rate limit')) {
+      await ctx.reply('⚠️ Too many requests. Please wait a moment and try again.');
+    } else {
+      await ctx.reply('⚠️ An error occurred. Please try again.');
+    }
   }
 });
 
 // Handle work order type selection
 bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const flowState = flows.get(ctx.from.id);
-  if (!flowState || flowState.flow !== 'wo_new') return;
-  
-  flowState.data.typeOfWork = ctx.match[1];
-  flowState.step = 2;
-  flows.set(ctx.from.id, flowState);
+  try {
+    await ctx.answerCbQuery().catch(() => {});
+    const { user } = await authenticateUser(ctx);
+    
+    const flowState = flows.get(user.tgId.toString());
+    if (!flowState || flowState.flow !== 'wo_new') return;
+    
+    // Validate flow ownership
+    if (flowState.userId !== user.tgId.toString()) {
+      flows.delete(user.tgId.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    flowState.data.typeOfWork = ctx.match[1];
+    flowState.step = 2;
+    flows.set(user.tgId.toString(), flowState);
   
   // Step 2: Choose service type
   const serviceTypeButtons = [
@@ -1077,6 +1438,14 @@ bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: serviceTypeButtons }
   });
+  } catch (error) {
+    console.error('Work order type selection error:', error);
+    if (error.message.includes('Rate limit')) {
+      await ctx.reply('⚠️ Too many requests. Please wait a moment and try again.');
+    } else {
+      await ctx.reply('⚠️ An error occurred. Please try again.');
+    }
+  }
 });
 
 // Handle service type selection
@@ -1127,43 +1496,67 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
 
 // Handle facility registration cancellation
 bot.action('regfac_cancel', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  flows.delete(ctx.from.id);
-  await ctx.reply('❌ Facility registration cancelled.', {
-    reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
-  });
+  try {
+    await ctx.answerCbQuery().catch(() => {});
+    const { user } = await authenticateUser(ctx);
+    flows.delete(user.tgId.toString());
+    await ctx.reply('❌ Facility registration cancelled.', {
+      reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+    });
+  } catch (error) {
+    console.error('Facility registration cancellation error:', error);
+    await ctx.reply('⚠️ An error occurred. Please try again.');
+  }
 });
 
 // Handle user registration cancellation
 bot.action('user_reg_cancel', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  flows.delete(ctx.from.id);
-  await ctx.reply('❌ User registration cancelled.', {
-    reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
-  });
+  try {
+    await ctx.answerCbQuery().catch(() => {});
+    const { user } = await authenticateUser(ctx);
+    flows.delete(user.tgId.toString());
+    await ctx.reply('❌ User registration cancelled.', {
+      reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+    });
+  } catch (error) {
+    console.error('User registration cancellation error:', error);
+    await ctx.reply('⚠️ An error occurred. Please try again.');
+  }
 });
 
 // Handle work order creation cancellation
 bot.action('wo_cancel', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  flows.delete(ctx.from.id);
-  await ctx.reply('❌ Work order creation cancelled.', {
-    reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
-  });
+  try {
+    await ctx.answerCbQuery().catch(() => {});
+    const { user } = await authenticateUser(ctx);
+    flows.delete(user.tgId.toString());
+    await ctx.reply('❌ Work order creation cancelled.', {
+      reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+    });
+  } catch (error) {
+    console.error('Work order cancellation error:', error);
+    await ctx.reply('⚠️ An error occurred. Please try again.');
+  }
 });
 
 // Handle plan selection during facility registration
 bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  
   try {
-    const flowState = flows.get(ctx.from.id);
+    await ctx.answerCbQuery().catch(() => {});
+    const { user } = await authenticateUser(ctx);
+    
+    const flowState = flows.get(user.tgId.toString());
     if (!flowState || flowState.flow !== 'reg_fac') {
       return ctx.reply('⚠️ Invalid registration flow. Please start over.');
     }
     
+    // Validate flow ownership
+    if (flowState.userId !== user.tgId.toString()) {
+      flows.delete(user.tgId.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
     flowState.data.plan = ctx.match[1];
-    const user = await ensureUser(ctx);
     const data = flowState.data;
     
     // Validate required fields
