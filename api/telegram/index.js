@@ -926,11 +926,27 @@ bot.action('wo_list', async (ctx) => {
 });
 
 async function requireActiveMembership(ctx) {
-  const user = await ensureUser(ctx);
-  if (!user.activeFacilityId || user.status !== 'active') {
-    throw new Error('no_active_facility');
+  try {
+    const { user } = await authenticateUser(ctx);
+    
+    if (!user.activeFacilityId || user.status !== 'active') {
+      throw new Error('no_active_facility');
+    }
+    
+    // Get facility membership
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        status: 'active'
+      }
+    });
+    
+    return { user, member: membership };
+  } catch (error) {
+    console.error('requireActiveMembership error:', error);
+    throw error;
   }
-  return { user };
 }
 
 // === Flow Handler for free text responses with security ===
