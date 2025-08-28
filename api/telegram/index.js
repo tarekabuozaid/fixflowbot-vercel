@@ -496,51 +496,8 @@ bot.command('approve', async (ctx) => {
   try {
     validateMasterAccess(ctx);
     
-    const pendingRequests = await prisma.facilitySwitchRequest.findMany({
-      where: { status: 'pending' },
-      include: { 
-        user: true,
-        facility: true
-      },
-      orderBy: { requestDate: 'asc' }
-    });
-    
-    if (!pendingRequests.length) {
-      return ctx.reply('✅ No pending requests to approve.');
-    }
-    
-    let requestList = '📋 **Pending Requests**\n\n';
-    pendingRequests.forEach((req, index) => {
-      const displayName = sanitizeInput(req.user.firstName || `User ${req.user.tgId?.toString()}`, 30);
-      const facilityName = sanitizeInput(req.facility.name, 30);
-      requestList += `${index + 1}. ${displayName}\n`;
-      requestList += `   Facility: ${facilityName}\n`;
-      requestList += `   Role: ${req.requestedRole}\n`;
-      requestList += `   Date: ${req.requestDate.toLocaleDateString()}\n\n`;
-    });
-    
-    const buttons = [
-      [Markup.button.callback('✅ Approve All', 'master_approve_all_requests')],
-      [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
-    ];
-    
-    await ctx.reply(requestList, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons }
-    });
-  } catch (error) {
-    console.error('Error in approve command:', error);
-    if (error.message.includes('Master access required')) {
-      await ctx.reply('🚫 Only master can approve requests.');
-    } else {
-      await ctx.reply('⚠️ An error occurred while loading requests.');
-    }
-  }
-});
-  
-  try {
     const [pendingFacilities, pendingRequests] = await Promise.all([
-      prisma.facility.count({ where: { isActive: false } }),
+      prisma.facility.count({ where: { status: 'pending' } }),
       prisma.facilitySwitchRequest.count({ where: { status: 'pending' } })
     ]);
     
