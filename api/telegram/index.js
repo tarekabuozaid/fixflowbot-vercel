@@ -835,19 +835,19 @@ async function requireActiveMembership(ctx) {
 bot.on('text', async (ctx, next) => {
   try {
     // Authenticate user first
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
-    const flowState = flows.get(user.tgId.toString());
+    const flowState = FlowManager.getFlow(user.tgId.toString());
     if (!flowState) return next();
     
     // Validate flow ownership
-    if (flowState.userId !== user.tgId.toString()) {
-      flows.delete(user.tgId.toString());
+    if (!FlowManager.validateFlowOwnership(user.tgId.toString(), flowState)) {
+      FlowManager.clearFlow(user.tgId.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
     // Sanitize input
-    const text = sanitizeInput(ctx.message.text || '', 1000);
+    const text = SecurityManager.sanitizeInput(ctx.message.text || '', 1000);
     if (!text) {
       return ctx.reply('⚠️ Invalid input. Please try again.');
     }
@@ -1131,27 +1131,26 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Location
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            FlowManager.clearFlow(user.tgId.toString());
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
           
-          const sanitizedLocation = sanitizeInput(text, 100);
+          const sanitizedLocation = SecurityManager.sanitizeInput(text, 100);
           if (sanitizedLocation.length < 3) {
             return ctx.reply('⚠️ Location must be at least 3 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.location = sanitizedLocation;
-          flowState.step = 5;
-          flows.set(user.tgId.toString(), flowState);
+          FlowManager.updateData(user.tgId.toString(), { location: sanitizedLocation });
+          FlowManager.updateStep(user.tgId.toString(), 5);
           
           return ctx.reply(
             `🔧 **Work Order Creation (5/6)**\n\n` +
             `✅ **Type:** ${flowState.data.typeOfWork}\n` +
             `✅ **Service:** ${flowState.data.typeOfService}\n` +
             `✅ **Priority:** ${flowState.data.priority}\n` +
-            `✅ **Location:** ${flowState.data.location}\n\n` +
+            `✅ **Location:** ${sanitizedLocation}\n\n` +
             `🔧 **Enter equipment details (optional)**\n` +
             `(e.g., HVAC Unit #5, Electrical Panel B)\n\n` +
             `Type /skip to skip this step\n` +
@@ -1163,28 +1162,29 @@ bot.on('text', async (ctx, next) => {
         // Step 5: Equipment (optional)
         if (flowState.step === 5) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            FlowManager.clearFlow(user.tgId.toString());
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
           
           if (text.toLowerCase() === '/skip') {
-            flowState.data.equipment = null;
+            FlowManager.updateData(user.tgId.toString(), { equipment: null });
           } else {
-            flowState.data.equipment = sanitizeInput(text, 100);
+            const sanitizedEquipment = SecurityManager.sanitizeInput(text, 100);
+            FlowManager.updateData(user.tgId.toString(), { equipment: sanitizedEquipment });
           }
           
-          flowState.step = 6;
-          flows.set(user.tgId.toString(), flowState);
+          FlowManager.updateStep(user.tgId.toString(), 6);
           
+          const updatedFlow = FlowManager.getFlow(user.tgId.toString());
           return ctx.reply(
             `🔧 **Work Order Creation (6/6)**\n\n` +
-            `✅ **Type:** ${flowState.data.typeOfWork}\n` +
-            `✅ **Service:** ${flowState.data.typeOfService}\n` +
-            `✅ **Priority:** ${flowState.data.priority}\n` +
-            `✅ **Location:** ${flowState.data.location}\n` +
-            `✅ **Equipment:** ${flowState.data.equipment || 'Not specified'}\n\n` +
+            `✅ **Type:** ${updatedFlow.data.typeOfWork}\n` +
+            `✅ **Service:** ${updatedFlow.data.typeOfService}\n` +
+            `✅ **Priority:** ${updatedFlow.data.priority}\n` +
+            `✅ **Location:** ${updatedFlow.data.location}\n` +
+            `✅ **Equipment:** ${updatedFlow.data.equipment || 'Not specified'}\n\n` +
             `📝 **Enter detailed description**\n` +
             `Describe the issue or work needed\n\n` +
             `Type /cancel to exit`,
@@ -1195,45 +1195,45 @@ bot.on('text', async (ctx, next) => {
         // Step 6: Description
         if (flowState.step === 6) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            FlowManager.clearFlow(user.tgId.toString());
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
           
-          const sanitizedDescription = sanitizeInput(text, 500);
+          const sanitizedDescription = SecurityManager.sanitizeInput(text, 500);
           if (sanitizedDescription.length < 10) {
             return ctx.reply('⚠️ Description must be at least 10 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.description = sanitizedDescription;
-          flows.set(user.tgId.toString(), flowState);
+          FlowManager.updateData(user.tgId.toString(), { description: sanitizedDescription });
           
           // Check plan limits before creating work order
           try {
-            await checkPlanLimit(user.activeFacilityId, 'workOrders', 1);
+            await PlanManager.checkPlanLimit(user.activeFacilityId, 'workOrders', 1);
           } catch (error) {
-            flows.delete(user.tgId.toString());
+            FlowManager.clearFlow(user.tgId.toString());
             return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
           }
           
           // Create work order
           try {
+            const finalFlow = FlowManager.getFlow(user.tgId.toString());
             const workOrder = await prisma.workOrder.create({
               data: {
                 facilityId: user.activeFacilityId,
                 createdByUserId: user.id,
-                typeOfWork: flowState.data.typeOfWork,
-                typeOfService: flowState.data.typeOfService,
-                priority: flowState.data.priority,
-                location: flowState.data.location,
-                equipment: flowState.data.equipment,
-                description: flowState.data.description,
+                typeOfWork: finalFlow.data.typeOfWork,
+                typeOfService: finalFlow.data.typeOfService,
+                priority: finalFlow.data.priority,
+                location: finalFlow.data.location,
+                equipment: finalFlow.data.equipment,
+                description: finalFlow.data.description,
                 status: 'pending'
               }
             });
             
-            flows.delete(user.tgId.toString());
+            FlowManager.clearFlow(user.tgId.toString());
             
             await ctx.reply(
               `✅ **Work Order Created Successfully!**\n\n` +
@@ -1254,7 +1254,7 @@ bot.on('text', async (ctx, next) => {
             );
           } catch (error) {
             console.error('Error creating work order:', error);
-            flows.delete(user.tgId.toString());
+            FlowManager.clearFlow(user.tgId.toString());
             await ctx.reply('⚠️ An error occurred while creating the work order. Please try again.');
           }
         }
@@ -1398,93 +1398,96 @@ bot.on('text', async (ctx, next) => {
 
 // Handle work order type selection
 bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)/, async (ctx) => {
-  try {
-    await ctx.answerCbQuery().catch(() => {});
-    const { user } = await authenticateUser(ctx);
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
-    const flowState = flows.get(user.tgId.toString());
-    if (!flowState || flowState.flow !== 'wo_new') return;
+    const flowState = FlowManager.getFlow(user.tgId.toString());
+    if (!flowState || flowState.flow !== 'wo_new') {
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
     
     // Validate flow ownership
-    if (flowState.userId !== user.tgId.toString()) {
-      flows.delete(user.tgId.toString());
+    if (!FlowManager.validateFlowOwnership(user.tgId.toString(), flowState)) {
+      FlowManager.clearFlow(user.tgId.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
-    flowState.data.typeOfWork = ctx.match[1];
-    flowState.step = 2;
-    flows.set(user.tgId.toString(), flowState);
-  
-  // Step 2: Choose service type
-  const serviceTypeButtons = [
-    [Markup.button.callback('⚡ Electrical', 'wo_service|electrical')],
-    [Markup.button.callback('🔧 Mechanical', 'wo_service|mechanical')],
-    [Markup.button.callback('🚰 Plumbing', 'wo_service|plumbing')],
-    [Markup.button.callback('❄️ HVAC', 'wo_service|hvac')],
-    [Markup.button.callback('🏗️ Structural', 'wo_service|structural')],
-    [Markup.button.callback('💻 IT/Technology', 'wo_service|it')],
-    [Markup.button.callback('🧹 General', 'wo_service|general')],
-    [Markup.button.callback('❌ Cancel', 'wo_cancel')]
-  ];
-  
-  await ctx.reply(`🔧 **Work Order Creation (2/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n\n**Choose the service type:**`, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: serviceTypeButtons }
-  });
-  } catch (error) {
-    console.error('Work order type selection error:', error);
-    if (error.message.includes('Rate limit')) {
-      await ctx.reply('⚠️ Too many requests. Please wait a moment and try again.');
-    } else {
-      await ctx.reply('⚠️ An error occurred. Please try again.');
-    }
-  }
+    FlowManager.updateData(user.tgId.toString(), { typeOfWork: ctx.match[1] });
+    FlowManager.updateStep(user.tgId.toString(), 2);
+    
+    // Step 2: Choose service type
+    const serviceTypeButtons = [
+      [Markup.button.callback('⚡ Electrical', 'wo_service|electrical')],
+      [Markup.button.callback('🔧 Mechanical', 'wo_service|mechanical')],
+      [Markup.button.callback('🚰 Plumbing', 'wo_service|plumbing')],
+      [Markup.button.callback('❄️ HVAC', 'wo_service|hvac')],
+      [Markup.button.callback('🏗️ Structural', 'wo_service|structural')],
+      [Markup.button.callback('💻 IT/Technology', 'wo_service|it')],
+      [Markup.button.callback('🧹 General', 'wo_service|general')],
+      [Markup.button.callback('❌ Cancel', 'wo_cancel')]
+    ];
+    
+    await ctx.reply(`🔧 **Work Order Creation (2/6)**\n\n✅ **Type:** ${ctx.match[1]}\n\n**Choose the service type:**`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: serviceTypeButtons }
+    });
+  }, ctx, 'wo_type_selection');
 });
 
 // Handle service type selection
 bot.action(/wo_service\|(electrical|mechanical|plumbing|hvac|structural|it|general)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const flowState = flows.get(ctx.from.id);
-  if (!flowState || flowState.flow !== 'wo_new') return;
   
-  flowState.data.typeOfService = ctx.match[1];
-  flowState.step = 3;
-  flows.set(ctx.from.id, flowState);
-  
-  // Step 3: Choose priority
-  const priorityButtons = [
-    [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
-    [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
-    [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')],
-    [Markup.button.callback('❌ Cancel', 'wo_cancel')]
-  ];
-  
-  await ctx.reply(`🔧 **Work Order Creation (3/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n✅ **Service:** ${flowState.data.typeOfService}\n\n**Choose priority:**`, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: priorityButtons }
-  });
+  return ErrorHandler.safeExecute(async () => {
+    const flowState = FlowManager.getFlow(ctx.from.id);
+    if (!flowState || flowState.flow !== 'wo_new') {
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    FlowManager.updateData(ctx.from.id, { typeOfService: ctx.match[1] });
+    FlowManager.updateStep(ctx.from.id, 3);
+    
+    // Step 3: Choose priority
+    const priorityButtons = [
+      [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
+      [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
+      [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')],
+      [Markup.button.callback('❌ Cancel', 'wo_cancel')]
+    ];
+    
+    await ctx.reply(`🔧 **Work Order Creation (3/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n✅ **Service:** ${ctx.match[1]}\n\n**Choose priority:**`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: priorityButtons }
+    });
+  }, ctx, 'wo_service_selection');
 });
 
 // Handle priority selection
 bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const flowState = flows.get(ctx.from.id);
-  if (!flowState || flowState.flow !== 'wo_new') return;
   
-  flowState.data.priority = ctx.match[1];
-  flowState.step = 4;
-  flows.set(ctx.from.id, flowState);
-  
-  await ctx.reply(
-    `🔧 **Work Order Creation (4/6)**\n\n` +
-    `✅ **Type:** ${flowState.data.typeOfWork}\n` +
-    `✅ **Service:** ${flowState.data.typeOfService}\n` +
-    `✅ **Priority:** ${flowState.data.priority}\n\n` +
-    `📍 **Enter the location/area**\n` +
-    `(e.g., Building A, Floor 2, Room 101)\n\n` +
-    `Type /cancel to exit`,
-    { parse_mode: 'Markdown' }
-  );
+  return ErrorHandler.safeExecute(async () => {
+    const flowState = FlowManager.getFlow(ctx.from.id);
+    if (!flowState || flowState.flow !== 'wo_new') {
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    FlowManager.updateData(ctx.from.id, { priority: ctx.match[1] });
+    FlowManager.updateStep(ctx.from.id, 4);
+    
+    await ctx.reply(
+      `🔧 **Work Order Creation (4/6)**\n\n` +
+      `✅ **Type:** ${flowState.data.typeOfWork}\n` +
+      `✅ **Service:** ${flowState.data.typeOfService}\n` +
+      `✅ **Priority:** ${ctx.match[1]}\n\n` +
+      `📍 **Enter the location/area**\n` +
+      `(e.g., Building A, Floor 2, Room 101)\n\n` +
+      `Type /cancel to exit`,
+      { parse_mode: 'Markdown' }
+    );
+  }, ctx, 'wo_priority_selection');
 });
 
 // Handle facility registration cancellation
@@ -1519,17 +1522,15 @@ bot.action('user_reg_cancel', async (ctx) => {
 
 // Handle work order creation cancellation
 bot.action('wo_cancel', async (ctx) => {
-  try {
-    await ctx.answerCbQuery().catch(() => {});
-    const { user } = await authenticateUser(ctx);
-    flows.delete(user.tgId.toString());
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    FlowManager.clearFlow(user.tgId.toString());
     await ctx.reply('❌ Work order creation cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
-  } catch (error) {
-    console.error('Work order cancellation error:', error);
-    await ctx.reply('⚠️ An error occurred. Please try again.');
-  }
+  }, ctx, 'wo_cancel');
 });
 
 // Handle plan selection during facility registration
