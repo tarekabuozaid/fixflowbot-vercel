@@ -1,6 +1,12 @@
 const { Telegraf, Markup } = require('telegraf');
 const { PrismaClient } = require('@prisma/client');
 
+// Import new modular utilities
+const SecurityManager = require('./utils/security');
+const FlowManager = require('./utils/flowManager');
+const PlanManager = require('./utils/planManager');
+const ErrorHandler = require('./utils/errorHandler');
+
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {
   try {
@@ -27,198 +33,56 @@ const prisma = new PrismaClient({
   }
 });
 
-// ===== SECURITY & VALIDATION SYSTEM =====
+// ===== LEGACY FUNCTIONS (for backward compatibility) =====
 
-// Rate limiting per user (requests per minute)
+// Legacy rate limiting (will be replaced by SecurityManager)
 const rateLimit = new Map();
-const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30; // requests per minute
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000; // 1 minute in milliseconds
+const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;
 
-// Input sanitization function
+// Legacy sanitization function (will be replaced by SecurityManager)
 function sanitizeInput(input, maxLength = 1000) {
-  if (!input || typeof input !== 'string') return '';
-  
-  // Remove null bytes and control characters
-  let sanitized = input.replace(/[\x00-\x1F\x7F]/g, '');
-  
-  // Remove HTML tags
-  sanitized = sanitized.replace(/<[^>]*>/g, '');
-  
-  // Remove script tags and dangerous patterns
-  sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-  sanitized = sanitized.replace(/javascript:/gi, '');
-  sanitized = sanitized.replace(/on\w+\s*=/gi, '');
-  
-  // Limit length
-  if (sanitized.length > maxLength) {
-    sanitized = sanitized.substring(0, maxLength);
-  }
-  
-  return sanitized.trim();
+  return SecurityManager.sanitizeInput(input, maxLength);
 }
 
-// User authentication and validation
+// Legacy authentication function (will be replaced by SecurityManager)
 async function authenticateUser(ctx) {
   try {
-    // Validate Telegram user data
-    if (!ctx.from || !ctx.from.id) {
-      throw new Error('Invalid user data');
-    }
-    
-    const userId = ctx.from.id;
-    
-    // Rate limiting check
-    const now = Date.now();
-    const userRateLimit = rateLimit.get(userId) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
-    
-    if (now > userRateLimit.resetTime) {
-      userRateLimit.count = 0;
-      userRateLimit.resetTime = now + RATE_LIMIT_WINDOW;
-    }
-    
-    if (userRateLimit.count >= RATE_LIMIT) {
-      throw new Error('Rate limit exceeded');
-    }
-    
-    userRateLimit.count++;
-    rateLimit.set(userId, userRateLimit);
-    
-    // Get or create user from database
-    const tgId = BigInt(userId);
-    let user = await prisma.user.findUnique({ where: { tgId } });
-    
-    let isNew = false;
-    
-    if (!user) {
-      // Create new user with sanitized data
-      const firstName = sanitizeInput(ctx.from.first_name || '', 50);
-      const lastName = sanitizeInput(ctx.from.last_name || '', 50);
-      const username = sanitizeInput(ctx.from.username || '', 32);
-      
-      user = await prisma.user.create({
-        data: { 
-          tgId, 
-          firstName: firstName || null,
-          lastName: lastName || null,
-          username: username || null,
-          status: 'pending' 
-        }
-      });
-      
-      isNew = true;
-      console.log(`🔐 New user created: ${userId} (${firstName || 'Unknown'})`);
-    }
-    
-    return { user, isNew };
+    return await SecurityManager.authenticateUser(ctx);
   } catch (error) {
     console.error('Authentication error:', error);
     throw error;
   }
 }
 
-// Facility access validation
+// Legacy facility access validation (will be replaced by SecurityManager)
 async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
   try {
-    const { user } = await authenticateUser(ctx);
-    
-    if (!facilityId) {
-      throw new Error('Facility ID required');
-    }
-    
-    // Validate facility ID format
-    const facilityIdBigInt = BigInt(facilityId);
-    
-    // Check if facility exists and is active
-    const facility = await prisma.facility.findUnique({
-      where: { id: facilityIdBigInt }
-    });
-    
-    if (!facility) {
-      throw new Error('Facility not found');
-    }
-    
-    if (facility.status !== 'active') {
-      throw new Error('Facility is inactive');
-    }
-    
-    // Check user membership
-    const membership = await prisma.facilityMember.findFirst({
-      where: { 
-        userId: user.id, 
-        facilityId: facilityIdBigInt,
-        status: 'active'
-      }
-    });
-    
-    if (!membership) {
-      throw new Error('User not a member of this facility');
-    }
-    
-    // Check role requirements if specified
-    if (requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
-      throw new Error('Insufficient permissions');
-    }
-    
-    return { user, facility, membership };
+    return await SecurityManager.validateFacilityAccess(ctx, facilityId, requiredRoles);
   } catch (error) {
     console.error('Facility access validation error:', error);
     throw error;
   }
 }
 
-// Work order access validation
+// Legacy work order access validation (will be replaced by SecurityManager)
 async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
   try {
-    const { user } = await authenticateUser(ctx);
-    
-    if (!workOrderId) {
-      throw new Error('Work order ID required');
-    }
-    
-    // Validate work order ID format
-    const workOrderIdBigInt = BigInt(workOrderId);
-    
-    // Get work order with facility info
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderIdBigInt },
-      include: { facility: true }
-    });
-    
-    if (!workOrder) {
-      throw new Error('Work order not found');
-    }
-    
-    // Check user membership in the facility
-    const membership = await prisma.facilityMember.findFirst({
-      where: { 
-        userId: user.id, 
-        facilityId: workOrder.facilityId,
-        status: 'active'
-      }
-    });
-    
-    if (!membership) {
-      throw new Error('User not a member of this facility');
-    }
-    
-    // Check role requirements if specified
-    if (requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
-      throw new Error('Insufficient permissions for this operation');
-    }
-    
-    return { user, workOrder, membership };
+    return await SecurityManager.validateWorkOrderAccess(ctx, workOrderId, requiredRoles);
   } catch (error) {
     console.error('Work order access validation error:', error);
     throw error;
   }
 }
 
-// Master access validation
+// Legacy master access validation (will be replaced by SecurityManager)
 function validateMasterAccess(ctx) {
-  if (!isMaster(ctx)) {
-    throw new Error('Master access required');
+  try {
+    return SecurityManager.validateMasterAccess(ctx);
+  } catch (error) {
+    console.error('Master access validation error:', error);
+    throw error;
   }
-  return true;
 }
 
 // Plan limits and validation
@@ -243,121 +107,37 @@ const PLAN_LIMITS = {
   }
 };
 
-// Check plan limits
+// Legacy plan limit check (will be replaced by PlanManager)
 async function checkPlanLimit(facilityId, action, count = 1) {
   try {
-    const facility = await prisma.facility.findUnique({
-      where: { id: facilityId }
-    });
-    
-    if (!facility) {
-      throw new Error('Facility not found');
-    }
-    
-    const plan = facility.planTier || 'Free';
-    const limits = PLAN_LIMITS[plan];
-    
-    if (!limits) {
-      throw new Error('Invalid plan');
-    }
-    
-    let currentCount = 0;
-    
-    switch (action) {
-      case 'members':
-        currentCount = await prisma.facilityMember.count({
-          where: { facilityId }
-        });
-        break;
-      case 'workOrders':
-        currentCount = await prisma.workOrder.count({
-          where: { facilityId }
-        });
-        break;
-      case 'reports':
-        currentCount = await prisma.report.count({
-          where: { facilityId }
-        });
-        break;
-      case 'reminders':
-        currentCount = await prisma.reminder.count({
-          where: { facilityId }
-        });
-        break;
-      default:
-        throw new Error('Invalid action');
-    }
-    
-    const newTotal = currentCount + count;
-    const limit = limits[action];
-    
-    if (newTotal > limit) {
-      throw new Error(`${action} limit exceeded for ${plan} plan. Limit: ${limit}, Current: ${currentCount}, Requested: ${count}`);
-    }
-    
-    return { allowed: true, current: currentCount, limit, plan };
+    return await PlanManager.checkPlanLimit(facilityId, action, count);
   } catch (error) {
     console.error('Plan limit check error:', error);
     throw error;
   }
 }
 
-// Get plan info
+// Legacy get plan info (will be replaced by PlanManager)
 async function getPlanInfo(facilityId) {
   try {
-    const facility = await prisma.facility.findUnique({
-      where: { id: facilityId }
-    });
-    
-    if (!facility) {
-      throw new Error('Facility not found');
-    }
-    
-    const plan = facility.planTier || 'Free';
-    const limits = PLAN_LIMITS[plan];
-    
-    const [members, workOrders, reports, reminders] = await Promise.all([
-      prisma.facilityMember.count({ where: { facilityId } }),
-      prisma.workOrder.count({ where: { facilityId } }),
-      prisma.report.count({ where: { facilityId } }),
-      prisma.reminder.count({ where: { facilityId } })
-    ]);
-    
-    return {
-      plan,
-      limits,
-      usage: {
-        members,
-        workOrders,
-        reports,
-        reminders
-      }
-    };
+    return await PlanManager.getPlanInfo(facilityId);
   } catch (error) {
     console.error('Get plan info error:', error);
     throw error;
   }
 }
 
-// Input validation helpers
+// Legacy input validation helpers (will be replaced by SecurityManager)
 function validateEmail(email) {
-  if (!email) return null;
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email) ? email : null;
+  return SecurityManager.validateEmail(email);
 }
 
 function validatePhone(phone) {
-  if (!phone) return null;
-  // Remove all non-digit characters
-  const cleanPhone = phone.replace(/\D/g, '');
-  // Check if it's a valid phone number (7-15 digits)
-  return cleanPhone.length >= 7 && cleanPhone.length <= 15 ? cleanPhone : null;
+  return SecurityManager.validatePhone(phone);
 }
 
 function validateName(name) {
-  if (!name) return null;
-  const sanitized = sanitizeInput(name, 50);
-  return sanitized.length >= 2 ? sanitized : null;
+  return SecurityManager.validateName(name);
 }
 
 // Global error handler with security logging
@@ -376,10 +156,10 @@ bot.catch((err, ctx) => {
   ctx.reply('⚠️ An error occurred. Please try again.').catch(() => {});
 });
 
-// Start command handler with security validation
+// Start command handler with enhanced error handling
 bot.command('start', async (ctx) => {
-  try {
-    const { user, isNew } = await authenticateUser(ctx);
+  return ErrorHandler.safeExecute(async () => {
+    const { user, isNew } = await SecurityManager.authenticateUser(ctx);
     console.log(`✅ Start command received from: ${user.tgId} (${user.firstName})`);
     
     if (isNew) {
@@ -411,48 +191,41 @@ bot.command('start', async (ctx) => {
     } else {
       await showMainMenu(ctx);
     }
-  } catch (error) {
-    console.error('Error in start command:', error);
-    if (error.message.includes('Rate limit')) {
-      await ctx.reply('⚠️ Too many requests. Please wait a moment and try again.');
-    } else {
-      await ctx.reply('⚠️ An error occurred while starting the bot. Please try again.');
-    }
-  }
+  }, ctx, 'start_command');
 });
 
-// In-memory flow state per user with security
-// Each entry: { flow: string, step: number|string, data: object, userId: string, timestamp: number }
+// Legacy flow management (will be replaced by FlowManager)
+// Note: FlowManager handles cleanup automatically
 const flows = new Map();
 
-// Clean up old flows (older than 1 hour)
+// Legacy cleanup (FlowManager handles this automatically)
 setInterval(() => {
-  const now = Date.now();
-  const oneHour = 60 * 60 * 1000;
-  for (const [userId, flow] of flows.entries()) {
-    if (now - flow.timestamp > oneHour) {
-      flows.delete(userId);
-    }
-  }
+  FlowManager.cleanupExpiredFlows();
 }, 30 * 60 * 1000); // Check every 30 minutes
 
 // Helpers with security
-const isMaster = (ctx) => String(ctx.from?.id || '') === String(MASTER_ID);
+const isMaster = (ctx) => {
+  try {
+    return SecurityManager.validateMasterAccess(ctx);
+  } catch {
+    return false;
+  }
+};
 
 // Secure user management functions
 async function ensureUser(ctx) {
-  const { user } = await authenticateUser(ctx);
+  const { user } = await SecurityManager.authenticateUser(ctx);
   return user;
 }
 
 async function getUser(ctx) {
-  const { user } = await authenticateUser(ctx);
+  const { user } = await SecurityManager.authenticateUser(ctx);
   return user;
 }
 
 async function showMainMenu(ctx) {
   try {
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     const buttons = [];
     
     if (user.status === 'active' && user.activeFacilityId) {
@@ -726,20 +499,26 @@ bot.command('setrole', async (ctx) => {
 // === Facility Registration Flow ===
 bot.action('reg_fac_start', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  flows.set(ctx.from.id, { flow: 'reg_fac', step: 1, data: {}, ts: Date.now() });
-  await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
+  
+  return ErrorHandler.safeExecute(async () => {
+    FlowManager.setFlow(ctx.from.id, 'reg_fac', 1, {});
+    await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
+  }, ctx, 'reg_fac_start');
 });
 
 // === Join Facility Flow ===
 bot.action('join_fac_start', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  await requireMembershipOrList(ctx);
+  
+  return ErrorHandler.safeExecute(async () => {
+    await requireMembershipOrList(ctx);
+  }, ctx, 'join_fac_start');
 });
 
 // Helper to list active facilities and allow user to select one
 async function requireMembershipOrList(ctx) {
   try {
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
     // List active facilities
     const facs = await prisma.facility.findMany({ 
@@ -754,7 +533,7 @@ async function requireMembershipOrList(ctx) {
     
     const rows = facs.map(f => [
       Markup.button.callback(
-        `${sanitizeInput(f.name, 30)}`, 
+        `${SecurityManager.sanitizeInput(f.name, 30)}`, 
         `join_fac|${f.id.toString()}`
       )
     ]);
@@ -764,7 +543,7 @@ async function requireMembershipOrList(ctx) {
     });
   } catch (error) {
     console.error('Error in requireMembershipOrList:', error);
-    await ctx.reply('⚠️ An error occurred while loading facilities.');
+    await ErrorHandler.handleError(error, ctx, 'requireMembershipOrList');
   }
 }
 
