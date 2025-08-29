@@ -314,34 +314,22 @@ async function showMainMenu(ctx) {
 
 // === Official Commands with Security ===
 bot.command('registerfacility', async (ctx) => {
-  try {
-    const { user } = await authenticateUser(ctx);
-    flows.set(user.tgId.toString(), { 
-      flow: 'reg_fac', 
-      step: 1, 
-      data: {}, 
-      userId: user.tgId.toString(),
-      timestamp: Date.now() 
-    });
+  return ErrorHandler.safeExecute(async () => {
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    FlowManager.setFlow(user.tgId.toString(), 'reg_fac', 1, {});
     await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
-  } catch (error) {
-    console.error('Error in registerfacility command:', error);
-    await ctx.reply('⚠️ An error occurred. Please try again.');
-  }
+  }, ctx, 'registerfacility_command');
 });
 
 bot.command('join', async (ctx) => {
-  try {
+  return ErrorHandler.safeExecute(async () => {
     await requireMembershipOrList(ctx);
-  } catch (error) {
-    console.error('Error in join command:', error);
-    await ctx.reply('⚠️ An error occurred. Please try again.');
-  }
+  }, ctx, 'join_command');
 });
 
 bot.command('switch', async (ctx) => {
-  try {
-    const { user } = await authenticateUser(ctx);
+  return ErrorHandler.safeExecute(async () => {
+    const { user } = await SecurityManager.authenticateUser(ctx);
     const memberships = await prisma.facilityMember.findMany({
       where: { userId: user.id, status: 'active' },
       include: { facility: true },
@@ -354,7 +342,7 @@ bot.command('switch', async (ctx) => {
     
     const buttons = memberships.map(m => [
       Markup.button.callback(
-        `${sanitizeInput(m.facility.name, 30)}${m.facility.id === user.activeFacilityId ? ' ✅' : ''}`,
+        `${SecurityManager.sanitizeInput(m.facility.name, 30)}${m.facility.id === user.activeFacilityId ? ' ✅' : ''}`,
         `switch_to_${m.facility.id}`
       )
     ]);
@@ -365,15 +353,12 @@ bot.command('switch', async (ctx) => {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: buttons }
     });
-  } catch (error) {
-    console.error('Error in switch command:', error);
-    await ctx.reply('⚠️ An error occurred while switching facilities.');
-  }
+  }, ctx, 'switch_command');
 });
 
 bot.command('members', async (ctx) => {
-  try {
-    const { user, facility, membership } = await validateFacilityAccess(ctx, null, ['facility_admin', 'supervisor']);
+  return ErrorHandler.safeExecute(async () => {
+    const { user, facility, membership } = await SecurityManager.validateFacilityAccess(ctx, null, ['facility_admin', 'supervisor']);
     
     const members = await prisma.facilityMember.findMany({
       where: { facilityId: facility.id, status: 'active' },
@@ -392,7 +377,7 @@ bot.command('members', async (ctx) => {
       
       const firstName = m.user.firstName || `User ${m.user.tgId?.toString() || m.user.id.toString()}`;
       const fullName = m.user.lastName ? `${firstName} ${m.user.lastName}` : firstName;
-      const displayName = sanitizeInput(fullName, 30);
+      const displayName = SecurityManager.sanitizeInput(fullName, 30);
       const jobTitle = m.user.jobTitle ? ` - ${m.user.jobTitle}` : '';
       
       memberList += `${index + 1}. ${roleEmoji[m.role]} ${displayName}${jobTitle}\n`;
@@ -409,19 +394,12 @@ bot.command('members', async (ctx) => {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: buttons }
     });
-  } catch (error) {
-    console.error('Error in members command:', error);
-    if (error.message.includes('Insufficient permissions')) {
-      await ctx.reply('⚠️ You need admin privileges to view facility members.');
-    } else {
-      await ctx.reply('⚠️ An error occurred while loading members.');
-    }
-  }
+  }, ctx, 'members_command');
 });
 
 bot.command('approve', async (ctx) => {
-  try {
-    validateMasterAccess(ctx);
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
     
     const [pendingFacilities, pendingRequests] = await Promise.all([
       prisma.facility.count({ where: { status: 'pending' } }),
@@ -458,42 +436,21 @@ bot.command('approve', async (ctx) => {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: buttons }
     });
-  } catch (error) {
-    console.error('Error in approve command:', error);
-    if (error.message.includes('Master access required')) {
-      await ctx.reply('🚫 Only master can approve requests.');
-    } else {
-      await ctx.reply('⚠️ An error occurred while loading requests.');
-    }
-  }
+  }, ctx, 'approve_command');
 });
 
 bot.command('deny', async (ctx) => {
-  try {
-    validateMasterAccess(ctx);
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
     await ctx.reply('❌ **Deny Requests**\n\nUse /approve to review and manage pending requests.');
-  } catch (error) {
-    console.error('Error in deny command:', error);
-    if (error.message.includes('Master access required')) {
-      await ctx.reply('🚫 Only master can deny requests.');
-    } else {
-      await ctx.reply('⚠️ An error occurred.');
-    }
-  }
+  }, ctx, 'deny_command');
 });
 
 bot.command('setrole', async (ctx) => {
-  try {
-    const { user, facility, membership } = await validateFacilityAccess(ctx, null, ['facility_admin']);
+  return ErrorHandler.safeExecute(async () => {
+    const { user, facility, membership } = await SecurityManager.validateFacilityAccess(ctx, null, ['facility_admin']);
     await ctx.reply('👑 **Set Member Role**\n\nThis feature will be available soon!\n\nFor now, use the facility dashboard to manage members.');
-  } catch (error) {
-    console.error('Error in setrole command:', error);
-    if (error.message.includes('Insufficient permissions')) {
-      await ctx.reply('⚠️ Only facility admins can set roles.');
-    } else {
-      await ctx.reply('⚠️ An error occurred while setting role.');
-    }
-  }
+  }, ctx, 'setrole_command');
 });
 
 // === Facility Registration Flow ===
@@ -781,9 +738,10 @@ bot.action(/switch_to_(\d+)/, async (ctx) => {
 // === Work Order Flow ===
 bot.action('wo_new', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  try {
+  
+  return ErrorHandler.safeExecute(async () => {
     const { user } = await requireActiveMembership(ctx);
-    flows.set(ctx.from.id, { flow: 'wo_new', step: 1, data: {}, ts: Date.now() });
+    FlowManager.setFlow(ctx.from.id, 'wo_new', 1, {});
     
     // Step 1: Choose work type
     const workTypeButtons = [
@@ -798,14 +756,13 @@ bot.action('wo_new', async (ctx) => {
     await ctx.reply('🔧 Work Order Creation (1/6)\nChoose the type of work:', {
       reply_markup: { inline_keyboard: workTypeButtons }
     });
-  } catch (e) {
-    await ctx.reply('⚠️ You must be an active member of a facility to create a work order.');
-  }
+  }, ctx, 'wo_new');
 });
 
 bot.action('wo_list', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  try {
+  
+  return ErrorHandler.safeExecute(async () => {
     const { user } = await requireActiveMembership(ctx);
     
     // Get statistics
@@ -847,14 +804,12 @@ bot.action('wo_list', async (ctx) => {
     await ctx.reply(`📋 **Work Orders Management**\n\n${statsText}\n\nChoose an option:`, {
       reply_markup: { inline_keyboard: buttons }
     });
-  } catch {
-    await ctx.reply('⚠️ You must be an active member of a facility to view work orders.');
-  }
+  }, ctx, 'wo_list');
 });
 
 async function requireActiveMembership(ctx) {
   try {
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
     if (!user.activeFacilityId || user.status !== 'active') {
       throw new Error('no_active_facility');
@@ -2263,7 +2218,8 @@ bot.action('wo_stats', async (ctx) => {
 // === Facility Dashboard ===
 bot.action('facility_dashboard', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  try {
+  
+  return ErrorHandler.safeExecute(async () => {
     const { user } = await requireActiveMembership(ctx);
     
     // Check if user is facility admin or supervisor
@@ -2309,7 +2265,7 @@ bot.action('facility_dashboard', async (ctx) => {
     ];
     
     // Get plan information
-    const planInfo = await getPlanInfo(user.activeFacilityId);
+    const planInfo = await PlanManager.getPlanInfo(user.activeFacilityId);
     
     const dashboardMessage = 
       `🏢 **Facility Dashboard**\n\n` +
@@ -2330,10 +2286,7 @@ bot.action('facility_dashboard', async (ctx) => {
     await ctx.reply(dashboardMessage, {
       reply_markup: { inline_keyboard: buttons }
     });
-  } catch (error) {
-    console.error('Error accessing facility dashboard:', error);
-    await ctx.reply('⚠️ An error occurred while accessing the dashboard.');
-  }
+  }, ctx, 'facility_dashboard');
 });
 
 // Manage facility members
