@@ -9,15 +9,14 @@
  */
 
 const { Markup } = require('telegraf');
-const { PrismaClient } = require('@prisma/client');
+
+// Import Services
+const { FacilityService, UserService, PlanService } = require('../services');
 
 // Import utilities
 const SecurityManager = require('../utils/security');
 const FlowManager = require('../utils/flowManager');
-const PlanManager = require('../utils/planManager');
 const ErrorHandler = require('../utils/errorHandler');
-
-const prisma = new PrismaClient();
 
 class FacilityController {
   
@@ -73,12 +72,9 @@ class FacilityController {
             return ctx.reply('❌ Invalid facility name. Please enter a name between 2-60 characters.');
           }
           
-          // التحقق من عدم وجود منشأة بنفس الاسم
-          const existingFacility = await prisma.facility.findFirst({
-            where: { name: sanitizedInput }
-          });
-
-          if (existingFacility) {
+          // التحقق من عدم وجود منشأة بنفس الاسم باستخدام FacilityService
+          const searchResult = await FacilityService.searchFacilities(sanitizedInput);
+          if (searchResult.success && searchResult.facilities.length > 0) {
             return ctx.reply('❌ A facility with this name already exists. Please choose a different name.');
           }
           
@@ -188,37 +184,26 @@ class FacilityController {
         return ctx.reply('❌ Invalid plan selected.');
       }
 
-      // إنشاء المنشأة
-      const facility = await prisma.facility.create({
-        data: {
-          name: flowState.data.facilityName,
-          city: flowState.data.city,
-          phone: flowState.data.phone,
-          planTier: plan,
-          status: 'active'
-        }
-      });
+      // إنشاء المنشأة باستخدام FacilityService
+      const facilityData = {
+        name: flowState.data.facilityName,
+        city: flowState.data.city,
+        phone: flowState.data.phone,
+        planTier: plan
+      };
 
-      // إنشاء عضوية للمستخدم كـ facility_admin
-      await prisma.facilityMember.create({
-        data: {
-          userId: user.id,
-          facilityId: facility.id,
-          role: 'facility_admin',
-          status: 'active'
-        }
-      });
+      const facilityResult = await FacilityService.createFacility(facilityData, user.id);
+      if (!facilityResult.success) {
+        return ctx.reply('❌ Error creating facility.');
+      }
 
-      // تحديث المنشأة النشطة للمستخدم
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { activeFacilityId: facility.id }
-      });
+      const facility = facilityResult.facility;
 
       // مسح الفلوه
       FlowManager.clearFlow(user.tgId.toString());
 
-      const planInfo = await PlanManager.getPlanInfo(facility.id.toString());
+      // الحصول على معلومات الخطة باستخدام PlanService
+      const planInfo = await PlanService.getPlanInfo(facility.id.toString());
 
       await ctx.reply(
         `✅ Facility registered successfully!\n\n` +
@@ -229,9 +214,9 @@ class FacilityController {
         `• Plan: ${plan}\n\n` +
         `👤 **Your Role:** Facility Administrator\n\n` +
         `📊 **Plan Limits:**\n` +
-        `• Members: ${planInfo.limits.members}\n` +
-        `• Work Orders: ${planInfo.limits.workOrders}\n` +
-        `• Reports: ${planInfo.limits.reports}\n\n` +
+        `• Members: ${planInfo.success ? planInfo.usage.members.max : 'N/A'}\n` +
+        `• Work Orders: ${planInfo.success ? planInfo.usage.workOrders.max : 'N/A'}\n` +
+        `• Reports: ${planInfo.success ? planInfo.usage.reminders.max : 'N/A'}\n\n` +
         `Welcome to ${facility.name}!`,
         {
           parse_mode: 'Markdown',
@@ -264,20 +249,25 @@ class FacilityController {
         );
       }
 
-      // إحصائيات المنشأة
-      const stats = await this.getFacilityStats(facility.id);
+      // إحصائيات المنشأة باستخدام FacilityService
+      const statsResult = await FacilityService.getFacilityStats(facility.id);
+      if (!statsResult.success) {
+        return ctx.reply('❌ Error loading facility statistics.');
+      }
+
+      const stats = statsResult.stats;
 
       const dashboardMessage = `🏢 **${facility.name} Dashboard**
 
 📊 **Quick Stats:**
-• Total Work Orders: ${stats.totalWorkOrders}
-• Open Work Orders: ${stats.openWorkOrders}
-• Total Members: ${stats.totalMembers}
-• Active Members: ${stats.activeMembers}
+• Total Work Orders: ${stats.workOrders.total}
+• Open Work Orders: ${stats.workOrders.open}
+• Total Members: ${stats.members.total}
+• Active Members: ${stats.members.active}
 
 📈 **Recent Activity:**
-• New Work Orders (Today): ${stats.todayWorkOrders}
-• Completed (This Week): ${stats.weeklyCompleted}
+• New Work Orders (Today): ${stats.workOrders.today}
+• Completed (This Week): ${stats.workOrders.weekly}
 
 🔧 **Your Role:** ${membership.role.charAt(0).toUpperCase() + membership.role.slice(1)}
 📅 **Member Since:** ${new Date(membership.joinedAt).toLocaleDateString()}`;
@@ -308,19 +298,13 @@ class FacilityController {
         ['facility_admin', 'supervisor', 'technician', 'user']
       );
 
-      const members = await prisma.facilityMember.findMany({
-        where: {
-          facilityId: facility.id,
-          status: 'active'
-        },
-        include: {
-          user: true
-        },
-        orderBy: [
-          { role: 'asc' },
-          { user: { firstName: 'asc' } }
-        ]
-      });
+      // الحصول على أعضاء المنشأة باستخدام UserService
+      const membersResult = await UserService.getFacilityMembers(facility.id);
+      if (!membersResult.success) {
+        return ctx.reply('❌ Error loading facility members.');
+      }
+
+      const members = membersResult.members;
 
       if (members.length === 0) {
         return ctx.reply(
@@ -374,34 +358,40 @@ class FacilityController {
         ['facility_admin', 'supervisor', 'technician', 'user']
       );
 
-      const stats = await this.getFacilityStats(facility.id);
+      // الحصول على إحصائيات المنشأة باستخدام FacilityService
+      const statsResult = await FacilityService.getFacilityStats(facility.id);
+      if (!statsResult.success) {
+        return ctx.reply('❌ Error loading facility statistics.');
+      }
+
+      const stats = statsResult.stats;
 
       const statsMessage = `📊 **${facility.name} Statistics**
 
 📋 **Work Orders:**
-• Total: ${stats.totalWorkOrders}
-• Open: ${stats.openWorkOrders}
-• In Progress: ${stats.inProgressWorkOrders}
-• Completed: ${stats.completedWorkOrders}
-• Closed: ${stats.closedWorkOrders}
+• Total: ${stats.workOrders.total}
+• Open: ${stats.workOrders.open}
+• In Progress: ${stats.workOrders.inProgress}
+• Completed: ${stats.workOrders.completed}
+• Closed: ${stats.workOrders.closed}
 
 👥 **Members:**
-• Total: ${stats.totalMembers}
-• Active: ${stats.activeMembers}
-• Facility Admins: ${stats.facilityAdmins}
-• Supervisors: ${stats.supervisors}
-• Technicians: ${stats.technicians}
-• Users: ${stats.users}
+• Total: ${stats.members.total}
+• Active: ${stats.members.active}
+• Facility Admins: ${stats.members.facilityAdmins}
+• Supervisors: ${stats.members.supervisors}
+• Technicians: ${stats.members.technicians}
+• Users: ${stats.members.users}
 
 📈 **Activity:**
-• Today: ${stats.todayWorkOrders} new work orders
-• This Week: ${stats.weeklyWorkOrders} new work orders
-• This Month: ${stats.monthlyWorkOrders} new work orders
+• Today: ${stats.workOrders.today} new work orders
+• This Week: ${stats.workOrders.weekly} new work orders
+• This Month: ${stats.workOrders.monthly} new work orders
 
 ⏱️ **Performance:**
-• Average Resolution Time: ${stats.avgResolutionTime} days
-• High Priority: ${stats.highPriorityWorkOrders}
-• On-Time Completion: ${stats.onTimeCompletion}%`;
+• Average Resolution Time: ${stats.plan ? '2.5' : 'N/A'} days
+• High Priority: ${stats.plan ? '0' : 'N/A'}
+• On-Time Completion: ${stats.plan ? '85' : 'N/A'}%`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Detailed Reports', 'reports_menu')],
@@ -414,68 +404,6 @@ class FacilityController {
         ...keyboard
       });
     }, ctx, 'show_facility_stats');
-  }
-
-  /**
-   * الحصول على إحصائيات المنشأة
-   */
-  static async getFacilityStats(facilityId) {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-    const [
-      totalWorkOrders,
-      openWorkOrders,
-      inProgressWorkOrders,
-      completedWorkOrders,
-      closedWorkOrders,
-      todayWorkOrders,
-      weeklyWorkOrders,
-      monthlyWorkOrders,
-      totalMembers,
-      activeMembers,
-      facilityAdmins,
-      supervisors,
-      technicians,
-      users
-    ] = await Promise.all([
-      prisma.workOrder.count({ where: { facilityId } }),
-      prisma.workOrder.count({ where: { facilityId, status: 'open' } }),
-      prisma.workOrder.count({ where: { facilityId, status: 'in_progress' } }),
-      prisma.workOrder.count({ where: { facilityId, status: 'done' } }),
-      prisma.workOrder.count({ where: { facilityId, status: 'closed' } }),
-      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: today } } }),
-      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: weekAgo } } }),
-      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: monthAgo } } }),
-      prisma.facilityMember.count({ where: { facilityId } }),
-      prisma.facilityMember.count({ where: { facilityId, status: 'active' } }),
-      prisma.facilityMember.count({ where: { facilityId, role: 'facility_admin', status: 'active' } }),
-      prisma.facilityMember.count({ where: { facilityId, role: 'supervisor', status: 'active' } }),
-      prisma.facilityMember.count({ where: { facilityId, role: 'technician', status: 'active' } }),
-      prisma.facilityMember.count({ where: { facilityId, role: 'user', status: 'active' } })
-    ]);
-
-    return {
-      totalWorkOrders,
-      openWorkOrders,
-      inProgressWorkOrders,
-      completedWorkOrders,
-      closedWorkOrders,
-      todayWorkOrders,
-      weeklyWorkOrders,
-      monthlyWorkOrders,
-      totalMembers,
-      activeMembers,
-      facilityAdmins,
-      supervisors,
-      technicians,
-      users,
-      avgResolutionTime: '2.5', // Placeholder
-      highPriorityWorkOrders: 0, // Placeholder
-      onTimeCompletion: 85 // Placeholder
-    };
   }
 }
 

@@ -1,10 +1,26 @@
 const { Telegraf, Markup } = require('telegraf');
-const { PrismaClient } = require('@prisma/client');
 
-// Import new modular utilities
+// Import Controllers
+const UserController = require('./controllers/userController');
+const FacilityController = require('./controllers/facilityController');
+const WorkOrderController = require('./controllers/workOrderController');
+
+// Import Middleware
+const {
+  authenticateUser,
+  requireActiveFacility,
+  requireMasterAccess,
+  handleRegistrationFlow,
+  rateLimit,
+  workOrderRateLimit,
+  facilityRateLimit,
+  validateFlowData,
+  validateFlowStepInput
+} = require('./middleware');
+
+// Import utilities
 const SecurityManager = require('./utils/security');
 const FlowManager = require('./utils/flowManager');
-const PlanManager = require('./utils/planManager');
 const ErrorHandler = require('./utils/errorHandler');
 
 // Load environment variables from .env if present
@@ -25,13 +41,15 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
-const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL
-    }
-  }
-});
+
+// ===== MIDDLEWARE SETUP =====
+
+// Global middleware - applied to all requests
+bot.use(handleRegistrationFlow);
+bot.use(rateLimit());
+
+// Authentication middleware for protected routes
+bot.use(authenticateUser);
 
 // ===== LEGACY FUNCTIONS (for backward compatibility) =====
 
@@ -5569,6 +5587,1471 @@ bot.action(/set_role\|(\d+)\|(\w+)/, async (ctx) => {
     console.error('Error setting role:', error);
     await ctx.reply('⚠️ An error occurred while setting role.');
   }
+});
+
+// ===== COMMAND HANDLERS =====
+
+// Start command
+bot.command('start', async (ctx) => {
+  try {
+    await ctx.reply(
+      '👋 Welcome to FixFlow Bot!\n\n' +
+      'I help you manage facilities and work orders efficiently.\n\n' +
+      'Use /register to get started or /help for more information.',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📝 Register', callback_data: 'register' }],
+            [{ text: '❓ Help', callback_data: 'help' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'start_command');
+  }
+});
+
+// Register command
+bot.command('register', async (ctx) => {
+  try {
+    await UserController.startUserRegistration(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'register_command');
+  }
+});
+
+// Help command
+bot.command('help', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📚 **FixFlow Bot Help**\n\n' +
+      '**Commands:**\n' +
+      '• /start - Start the bot\n' +
+      '• /register - Register as a new user\n' +
+      '• /help - Show this help message\n\n' +
+      '**Features:**\n' +
+      '• 🏢 Facility Management\n' +
+      '• 🔧 Work Order Creation\n' +
+      '• 👥 Member Management\n' +
+      '• 📊 Reports & Statistics\n\n' +
+      '**Need Support?**\n' +
+      'Contact your facility administrator.',
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'help_command');
+  }
+});
+
+// ===== CALLBACK QUERY HANDLERS =====
+
+// Registration flow
+bot.action('register', async (ctx) => {
+  try {
+    await UserController.startUserRegistration(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'register_action');
+  }
+});
+
+// Help action
+bot.action('help', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📚 **FixFlow Bot Help**\n\n' +
+      '**Commands:**\n' +
+      '• /start - Start the bot\n' +
+      '• /register - Register as a new user\n' +
+      '• /help - Show this help message\n\n' +
+      '**Features:**\n' +
+      '• 🏢 Facility Management\n' +
+      '• 🔧 Work Order Creation\n' +
+      '• 👥 Member Management\n' +
+      '• 📊 Reports & Statistics\n\n' +
+      '**Need Support?**\n' +
+      'Contact your facility administrator.',
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'help_action');
+  }
+});
+
+// User registration steps
+bot.action(/user_role\|(\w+)/, async (ctx) => {
+  try {
+    await UserController.handleUserRegistrationStep(ctx, 'role', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'user_role_action');
+  }
+});
+
+// User role selection
+bot.action(/user_role_select\|(\w+)/, async (ctx) => {
+  try {
+    await UserController.handleUserRegistrationStep(ctx, 'role', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'user_role_select_action');
+  }
+});
+
+// Facility selection for registration
+bot.action(/select_facility\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.handleUserRegistrationStep(ctx, 'facility', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'select_facility_action');
+  }
+});
+
+// Facility selection for registration (alternative)
+bot.action(/facility_select\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.handleUserRegistrationStep(ctx, 'facility', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_select_action');
+  }
+});
+
+// Facility switch
+bot.action(/switch_facility\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.switchActiveFacility(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'switch_facility_action');
+  }
+});
+
+// Facility switch (alternative)
+bot.action(/facility_switch\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.switchActiveFacility(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_switch_action');
+  }
+});
+
+// Facility selection
+bot.action(/select_facility\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.selectFacility(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'select_facility_action');
+  }
+});
+
+// Facility selection (alternative)
+bot.action(/facility_select_alt\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.selectFacility(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_select_alt_action');
+  }
+});
+
+// Facility registration
+bot.action('facility_registration', async (ctx) => {
+  try {
+    await FacilityController.startFacilityRegistration(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_registration_action');
+  }
+});
+
+// Facility registration from menu
+bot.action('new_facility', async (ctx) => {
+  try {
+    await FacilityController.startFacilityRegistration(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'new_facility_action');
+  }
+});
+
+// Facility registration (alternative)
+bot.action('facility_new', async (ctx) => {
+  try {
+    await FacilityController.startFacilityRegistration(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_new_action');
+  }
+});
+
+// Facility registration steps
+bot.action(/facility_plan\|(\w+)/, async (ctx) => {
+  try {
+    await FacilityController.handleFacilityRegistrationStep(ctx, 'plan', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_plan_action');
+  }
+});
+
+// Facility plan selection
+bot.action(/facility_plan_select\|(\w+)/, async (ctx) => {
+  try {
+    await FacilityController.handleFacilityRegistrationStep(ctx, 'plan', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_plan_select_action');
+  }
+});
+
+// Facility plan (alternative)
+bot.action(/facility_plan_alt\|(\w+)/, async (ctx) => {
+  try {
+    await FacilityController.handleFacilityRegistrationStep(ctx, 'plan', ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_plan_alt_action');
+  }
+});
+
+// Work order creation
+bot.action('wo_new', async (ctx) => {
+  try {
+    await WorkOrderController.startWorkOrderCreation(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_new_action');
+  }
+});
+
+// Work order creation (alternative)
+bot.action('work_order_new', async (ctx) => {
+  try {
+    await WorkOrderController.startWorkOrderCreation(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_new_action');
+  }
+});
+
+// Work order list (from menu)
+bot.action('work_orders', async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrders(ctx, 'all');
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_orders_action');
+  }
+});
+
+// Work order list (alternative)
+bot.action('work_order_list', async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrders(ctx, 'all');
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_list_action');
+  }
+});
+
+// Work order filter menu
+bot.action('wo_filter_menu', async (ctx) => {
+  try {
+    await ctx.reply(
+      '🔍 **Filter Work Orders**\n\n' +
+      'Select filter:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 All', callback_data: 'wo_list' }],
+            [{ text: '📋 Open', callback_data: 'wo_filter|open' }],
+            [{ text: '🔄 In Progress', callback_data: 'wo_filter|in_progress' }],
+            [{ text: '✅ Done', callback_data: 'wo_filter|done' }],
+            [{ text: '🔒 Closed', callback_data: 'wo_filter|closed' }],
+            [{ text: '👤 My Orders', callback_data: 'wo_filter|my' }],
+            [{ text: '🔙 Back', callback_data: 'wo_list' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_filter_menu_action');
+  }
+});
+
+// Work order filter menu (alternative)
+bot.action('work_order_filter_menu', async (ctx) => {
+  try {
+    await ctx.reply(
+      '🔍 **Filter Work Orders**\n\n' +
+      'Select filter:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 All', callback_data: 'work_order_list' }],
+            [{ text: '📋 Open', callback_data: 'work_order_filter|open' }],
+            [{ text: '🔄 In Progress', callback_data: 'work_order_filter|in_progress' }],
+            [{ text: '✅ Done', callback_data: 'work_order_filter|done' }],
+            [{ text: '🔒 Closed', callback_data: 'work_order_filter|closed' }],
+            [{ text: '👤 My Orders', callback_data: 'work_order_filter|my' }],
+            [{ text: '🔙 Back', callback_data: 'work_order_list' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_filter_menu_action');
+  }
+});
+
+// Work order filter
+bot.action(/wo_filter\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrders(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_filter_action');
+  }
+});
+
+// Work order filter (alternative)
+bot.action(/work_order_filter\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrders(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_filter_action');
+  }
+});
+
+// Work order type selection
+bot.action(/wo_type\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.handleWorkOrderStep(ctx, 2, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_type_action');
+  }
+});
+
+// Work order type (alternative)
+bot.action(/work_order_type\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.handleWorkOrderStep(ctx, 2, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_type_action');
+  }
+});
+
+// Work order service selection
+bot.action(/wo_service\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.handleWorkOrderStep(ctx, 3, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_service_action');
+  }
+});
+
+// Work order service (alternative)
+bot.action(/work_order_service\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.handleWorkOrderStep(ctx, 3, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_service_action');
+  }
+});
+
+// Work order priority selection
+bot.action(/wo_priority\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.handleWorkOrderStep(ctx, 4, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_priority_action');
+  }
+});
+
+// Work order priority (alternative)
+bot.action(/work_order_priority\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.handleWorkOrderStep(ctx, 4, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_priority_action');
+  }
+});
+
+// Work order cancellation
+bot.action('wo_cancel', async (ctx) => {
+  try {
+    await WorkOrderController.cancelWorkOrderCreation(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_cancel_action');
+  }
+});
+
+// Work order cancellation (alternative)
+bot.action('work_order_cancel', async (ctx) => {
+  try {
+    await WorkOrderController.cancelWorkOrderCreation(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_cancel_action');
+  }
+});
+
+// Work order list
+bot.action('wo_list', async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrders(ctx, 'all');
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_list_action');
+  }
+});
+
+// Work order list (alternative)
+bot.action('work_order_list_alt', async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrders(ctx, 'all');
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_list_alt_action');
+  }
+});
+
+// Work order details
+bot.action(/wo_view\|(\d+)/, async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrderDetails(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_view_action');
+  }
+});
+
+// Work order view (alternative)
+bot.action(/work_order_view\|(\d+)/, async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrderDetails(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_view_action');
+  }
+});
+
+// Work order status change
+bot.action(/wo_status\|(\d+)\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.changeWorkOrderStatus(ctx, ctx.match[1], ctx.match[2]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_status_action');
+  }
+});
+
+// Work order status (alternative)
+bot.action(/work_order_status\|(\d+)\|(\w+)/, async (ctx) => {
+  try {
+    await WorkOrderController.changeWorkOrderStatus(ctx, ctx.match[1], ctx.match[2]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_status_action');
+  }
+});
+
+// Work order status menu
+bot.action(/wo_status_menu\|(\d+)/, async (ctx) => {
+  try {
+    const workOrderId = ctx.match[1];
+    await ctx.reply(
+      '🔄 **Change Work Order Status**\n\n' +
+      'Select new status:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 Open', callback_data: `wo_status|${workOrderId}|open` }],
+            [{ text: '🔄 In Progress', callback_data: `wo_status|${workOrderId}|in_progress` }],
+            [{ text: '✅ Done', callback_data: `wo_status|${workOrderId}|done` }],
+            [{ text: '🔒 Closed', callback_data: `wo_status|${workOrderId}|closed` }],
+            [{ text: '🔙 Back', callback_data: `wo_view|${workOrderId}` }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_status_menu_action');
+  }
+});
+
+// Work order status menu (alternative)
+bot.action(/work_order_status_menu\|(\d+)/, async (ctx) => {
+  try {
+    const workOrderId = ctx.match[1];
+    await ctx.reply(
+      '🔄 **Change Work Order Status**\n\n' +
+      'Select new status:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 Open', callback_data: `work_order_status|${workOrderId}|open` }],
+            [{ text: '🔄 In Progress', callback_data: `work_order_status|${workOrderId}|in_progress` }],
+            [{ text: '✅ Done', callback_data: `work_order_status|${workOrderId}|done` }],
+            [{ text: '🔒 Closed', callback_data: `work_order_status|${workOrderId}|closed` }],
+            [{ text: '🔙 Back', callback_data: `work_order_view|${workOrderId}` }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_status_menu_action');
+  }
+});
+
+// Work order statistics
+bot.action('wo_stats', async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrderStats(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_stats_action');
+  }
+});
+
+// Work order stats (alternative)
+bot.action('work_order_stats', async (ctx) => {
+  try {
+    await WorkOrderController.showWorkOrderStats(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_stats_action');
+  }
+});
+
+// Work order history
+bot.action(/wo_history\|(\d+)/, async (ctx) => {
+  try {
+    const workOrderId = ctx.match[1];
+    const { WorkOrderService } = require('./services');
+    
+    const historyResult = await WorkOrderService.getStatusHistory(workOrderId);
+    if (!historyResult.success) {
+      return ctx.reply('❌ Error loading work order history.');
+    }
+
+    const history = historyResult.history;
+    if (history.length === 0) {
+      return ctx.reply(
+        '📜 **Work Order History**\n\n' +
+        'No status changes recorded yet.',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Back', callback_data: `wo_view|${workOrderId}` }]
+            ]
+          }
+        }
+      );
+    }
+
+    let historyMessage = '📜 **Work Order History**\n\n';
+    history.forEach((entry, index) => {
+      const oldStatus = entry.oldStatus || 'N/A';
+      const newStatus = entry.newStatus.replace('_', ' ').toUpperCase();
+      const date = new Date(entry.createdAt).toLocaleString();
+      historyMessage += `${index + 1}. ${oldStatus} → ${newStatus}\n`;
+      historyMessage += `   📅 ${date}\n\n`;
+    });
+
+    await ctx.reply(historyMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back', callback_data: `wo_view|${workOrderId}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'wo_history_action');
+  }
+});
+
+// Work order history (alternative)
+bot.action(/work_order_history\|(\d+)/, async (ctx) => {
+  try {
+    const workOrderId = ctx.match[1];
+    const { WorkOrderService } = require('./services');
+    
+    const historyResult = await WorkOrderService.getStatusHistory(workOrderId);
+    if (!historyResult.success) {
+      return ctx.reply('❌ Error loading work order history.');
+    }
+
+    const history = historyResult.history;
+    if (history.length === 0) {
+      return ctx.reply(
+        '📜 **Work Order History**\n\n' +
+        'No status changes recorded yet.',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Back', callback_data: `work_order_view|${workOrderId}` }]
+            ]
+          }
+        }
+      );
+    }
+
+    let historyMessage = '📜 **Work Order History**\n\n';
+    history.forEach((entry, index) => {
+      const oldStatus = entry.oldStatus || 'N/A';
+      const newStatus = entry.newStatus.replace('_', ' ').toUpperCase();
+      const date = new Date(entry.createdAt).toLocaleString();
+      historyMessage += `${index + 1}. ${oldStatus} → ${newStatus}\n`;
+      historyMessage += `   📅 ${date}\n\n`;
+    });
+
+    await ctx.reply(historyMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back', callback_data: `work_order_view|${workOrderId}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'work_order_history_action');
+  }
+});
+
+// Main menu actions
+// User profile
+bot.action('user_profile', async (ctx) => {
+  try {
+    await UserController.showUserProfile(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'user_profile_action');
+  }
+});
+
+// Back to menu
+bot.action('back_to_menu', async (ctx) => {
+  try {
+    await UserController.showMainMenu(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'back_to_menu_action');
+  }
+});
+
+// Main menu options
+bot.action('main_menu', async (ctx) => {
+  try {
+    await UserController.showMainMenu(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'main_menu_action');
+  }
+});
+
+// Main menu with work orders
+bot.action('main_menu_wo', async (ctx) => {
+  try {
+    await UserController.showMainMenu(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'main_menu_wo_action');
+  }
+});
+
+// Facility management
+bot.action('facility_management', async (ctx) => {
+  try {
+    await FacilityController.showFacilityManagement(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_management_action');
+  }
+});
+
+// Facility settings
+bot.action('facility_settings', async (ctx) => {
+  try {
+    await FacilityController.showFacilitySettings(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_settings_action');
+  }
+});
+
+// Member management
+bot.action('member_management', async (ctx) => {
+  try {
+    await UserController.showMemberManagement(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'member_management_action');
+  }
+});
+
+// Member list
+bot.action('member_list', async (ctx) => {
+  try {
+    await UserController.showFacilityMembers(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'member_list_action');
+  }
+});
+
+// Manage members
+bot.action('manage_members', async (ctx) => {
+  try {
+    await UserController.showMemberManagement(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'manage_members_action');
+  }
+});
+
+// Change roles
+bot.action('change_roles', async (ctx) => {
+  try {
+    await UserController.showRoleManagement(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'change_roles_action');
+  }
+});
+
+// Set role
+bot.action(/set_role\|(\d+)\|(\w+)/, async (ctx) => {
+  try {
+    await UserController.setMemberRole(ctx, ctx.match[1], ctx.match[2]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'set_role_action');
+  }
+});
+
+// Change specific role
+bot.action(/change_specific_role\|(\d+)/, async (ctx) => {
+  try {
+    await UserController.showSpecificRoleChange(ctx, ctx.match[1]);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'change_specific_role_action');
+  }
+});
+
+// Reports and statistics
+bot.action('reports', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📊 **Reports & Statistics**\n\n' +
+      'Select a report type:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 Work Orders', callback_data: 'wo_stats' }],
+            [{ text: '👥 Members', callback_data: 'member_stats' }],
+            [{ text: '🏢 Facility', callback_data: 'facility_stats' }],
+            [{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'reports_action');
+  }
+});
+
+// Member statistics
+bot.action('member_stats', async (ctx) => {
+  try {
+    await UserController.showMemberStatistics(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'member_stats_action');
+  }
+});
+
+// Member statistics (alternative)
+bot.action('reports_members', async (ctx) => {
+  try {
+    await UserController.showMemberStatistics(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'reports_members_action');
+  }
+});
+
+// Facility statistics
+bot.action('facility_stats', async (ctx) => {
+  try {
+    await FacilityController.showFacilityStatistics(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'facility_stats_action');
+  }
+});
+
+// Facility statistics (alternative)
+bot.action('reports_facility', async (ctx) => {
+  try {
+    await FacilityController.showFacilityStatistics(ctx);
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'reports_facility_action');
+  }
+});
+
+// Performance graph
+bot.action('performance_graph', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📈 **Performance Graph**\n\n' +
+      'This feature is coming soon!\n\n' +
+      'You will be able to view:\n' +
+      '• Work order completion trends\n' +
+      '• Response time analytics\n' +
+      '• Team performance metrics\n' +
+      '• Facility efficiency data',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Reports', callback_data: 'reports' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'performance_graph_action');
+  }
+});
+
+// Performance graph (alternative)
+bot.action('reports_performance', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📈 **Performance Graph**\n\n' +
+      'This feature is coming soon!\n\n' +
+      'You will be able to view:\n' +
+      '• Work order completion trends\n' +
+      '• Response time analytics\n' +
+      '• Team performance metrics\n' +
+      '• Facility efficiency data',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Reports', callback_data: 'reports' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'reports_performance_action');
+  }
+});
+
+// Detailed reports
+bot.action('detailed_reports', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📊 **Detailed Reports**\n\n' +
+      'This feature is coming soon!\n\n' +
+      'You will be able to generate:\n' +
+      '• Monthly facility reports\n' +
+      '• Work order analysis\n' +
+      '• Member activity reports\n' +
+      '• Custom date range reports',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Reports', callback_data: 'reports' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'detailed_reports_action');
+  }
+});
+
+// Detailed reports (alternative)
+bot.action('reports_detailed', async (ctx) => {
+  try {
+    await ctx.reply(
+      '📊 **Detailed Reports**\n\n' +
+      'This feature is coming soon!\n\n' +
+      'You will be able to generate:\n' +
+      '• Monthly facility reports\n' +
+      '• Work order analysis\n' +
+      '• Member activity reports\n' +
+      '• Custom date range reports',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Reports', callback_data: 'reports' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'reports_detailed_action');
+  }
+});
+
+// ===== REMINDER CREATION HANDLER =====
+
+async function handleReminderCreationStep(ctx, step, text) {
+  const userId = ctx.from.id.toString();
+  const flowState = FlowManager.getFlow(userId);
+  
+  if (!flowState) {
+    return ctx.reply('❌ Session expired. Please start over.');
+  }
+
+  try {
+    switch (step) {
+      case 1: // Title
+        if (text.toLowerCase() === '/cancel') {
+          FlowManager.clearFlow(userId);
+          return ctx.reply('❌ تم إلغاء إنشاء التذكير.', {
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]]
+            }
+          });
+        }
+
+        const sanitizedTitle = SecurityManager.sanitizeInput(text, 100);
+        if (sanitizedTitle.length < 3) {
+          return ctx.reply('⚠️ يجب أن يكون العنوان 3 أحرف على الأقل. حاول مرة أخرى أو اكتب /cancel للإلغاء:');
+        }
+
+        flowState.data.title = sanitizedTitle;
+        flowState.step = 2;
+        FlowManager.updateStep(userId, 2);
+        FlowManager.updateData(userId, { title: sanitizedTitle });
+
+        await ctx.reply('📅 أدخل تاريخ التذكير (YYYY-MM-DD):', {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '❌ إلغاء', callback_data: 'reminders' }]
+            ]
+          }
+        });
+        break;
+
+      case 2: // Date
+        if (text.toLowerCase() === '/cancel') {
+          FlowManager.clearFlow(userId);
+          return ctx.reply('❌ تم إلغاء إنشاء التذكير.', {
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]]
+            }
+          });
+        }
+
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(text)) {
+          return ctx.reply('⚠️ يرجى إدخال التاريخ بالتنسيق الصحيح (YYYY-MM-DD). حاول مرة أخرى أو اكتب /cancel للإلغاء:');
+        }
+
+        const dueDate = new Date(text);
+        if (isNaN(dueDate.getTime()) || dueDate < new Date()) {
+          return ctx.reply('⚠️ يرجى إدخال تاريخ صحيح في المستقبل. حاول مرة أخرى أو اكتب /cancel للإلغاء:');
+        }
+
+        flowState.data.dueDate = dueDate;
+        flowState.step = 3;
+        FlowManager.updateStep(userId, 3);
+        FlowManager.updateData(userId, { dueDate });
+
+        await ctx.reply('📝 أدخل وصف التذكير (اختياري):', {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '⏭️ تخطي', callback_data: 'reminder_skip_description' }],
+              [{ text: '❌ إلغاء', callback_data: 'reminders' }]
+            ]
+          }
+        });
+        break;
+
+      case 3: // Description
+        if (text.toLowerCase() === '/cancel') {
+          FlowManager.clearFlow(userId);
+          return ctx.reply('❌ تم إلغاء إنشاء التذكير.', {
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]]
+            }
+          });
+        }
+
+        const sanitizedDescription = SecurityManager.sanitizeInput(text, 500);
+        flowState.data.description = sanitizedDescription;
+        
+        // Create the reminder
+        const user = await SecurityManager.authenticateUser(ctx.from.id);
+        const membership = await prisma.facilityMember.findFirst({
+          where: { userId: user.id, isActive: true }
+        });
+
+        const reminderData = {
+          title: flowState.data.title,
+          description: sanitizedDescription,
+          dueDate: flowState.data.dueDate,
+          userId: user.id,
+          type: 'personal',
+          isActive: true
+        };
+
+        if (membership) {
+          reminderData.facilityId = membership.facilityId;
+          reminderData.type = 'facility';
+        }
+
+        await prisma.reminder.create({
+          data: reminderData
+        });
+
+        FlowManager.clearFlow(userId);
+
+        await ctx.reply('✅ تم إنشاء التذكير بنجاح!', {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]
+            ]
+          }
+        });
+        break;
+
+      default:
+        FlowManager.clearFlow(userId);
+        await ctx.reply('❌ خطأ في تدفق إنشاء التذكير. يرجى المحاولة مرة أخرى.');
+    }
+  } catch (error) {
+    console.error('Reminder creation error:', error);
+    FlowManager.clearFlow(userId);
+    await ctx.reply('❌ حدث خطأ أثناء إنشاء التذكير. يرجى المحاولة مرة أخرى.');
+  }
+}
+
+// ===== ADDITIONAL ACTION HANDLERS =====
+
+// Member statistics
+bot.action('member_stats', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    const membership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, isActive: true },
+      include: { facility: true }
+    });
+
+    if (!membership || !['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('❌ لا تملك صلاحية لعرض إحصائيات الأعضاء');
+    }
+
+    const stats = await prisma.facilityMember.groupBy({
+      by: ['role'],
+      where: { facilityId: membership.facilityId },
+      _count: { role: true }
+    });
+
+    const totalMembers = stats.reduce((sum, stat) => sum + stat._count.role, 0);
+    const roleStats = stats.map(stat => `${stat.role}: ${stat._count.role}`).join('\n');
+
+    const message = `📊 إحصائيات أعضاء المنشأة: ${membership.facility.name}\n\n` +
+                   `إجمالي الأعضاء: ${totalMembers}\n\n` +
+                   `التوزيع حسب الدور:\n${roleStats}`;
+
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة للقائمة الرئيسية', callback_data: 'back_to_menu' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+// Member reports
+bot.action('reports_member', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    const membership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, isActive: true },
+      include: { facility: true }
+    });
+
+    if (!membership || !['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('❌ لا تملك صلاحية لعرض تقارير الأعضاء');
+    }
+
+    const members = await prisma.facilityMember.findMany({
+      where: { facilityId: membership.facilityId },
+      include: { user: true },
+      orderBy: { joinedAt: 'desc' }
+    });
+
+    const report = `📋 تقرير أعضاء المنشأة: ${membership.facility.name}\n\n` +
+                   `إجمالي الأعضاء: ${members.length}\n\n` +
+                   members.map((member, index) => 
+                     `${index + 1}. ${member.user.firstName} ${member.user.lastName || ''}\n` +
+                     `   الدور: ${member.role}\n` +
+                     `   تاريخ الانضمام: ${member.joinedAt.toLocaleDateString('ar-SA')}\n`
+                   ).join('\n');
+
+    await ctx.reply(report, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة للقائمة الرئيسية', callback_data: 'back_to_menu' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+// Notification settings
+bot.action('notification_settings', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    const message = `🔔 إعدادات الإشعارات\n\n` +
+                   `يمكنك تخصيص الإشعارات التي تريد استلامها:\n\n` +
+                   `📱 إشعارات فورية\n` +
+                   `📧 إشعارات يومية\n` +
+                   `📊 تقارير أسبوعية\n` +
+                   `⚠️ تنبيهات عاجلة`;
+
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔔 الإشعارات الفورية', callback_data: 'notif_instant' }],
+          [{ text: '📧 الإشعارات اليومية', callback_data: 'notif_daily' }],
+          [{ text: '📊 التقارير الأسبوعية', callback_data: 'notif_weekly' }],
+          [{ text: '⚠️ التنبيهات العاجلة', callback_data: 'notif_urgent' }],
+          [{ text: '🔙 العودة للقائمة الرئيسية', callback_data: 'back_to_menu' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+// Reminder management
+bot.action('reminders', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    const message = `⏰ إدارة التذكيرات\n\n` +
+                   `يمكنك إنشاء وإدارة التذكيرات:\n\n` +
+                   `📅 تذكيرات شخصية\n` +
+                   `🏢 تذكيرات المنشأة\n` +
+                   `📋 تذكيرات المهام\n` +
+                   `🔄 تذكيرات دورية`;
+
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📅 تذكيراتي', callback_data: 'my_reminders' }],
+          [{ text: '🏢 تذكيرات المنشأة', callback_data: 'facility_reminders' }],
+          [{ text: '➕ إنشاء تذكير', callback_data: 'create_reminder' }],
+          [{ text: '🔙 العودة للقائمة الرئيسية', callback_data: 'back_to_menu' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+// Help menu
+bot.action('help', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const message = `🤖 مساعدة FixFlow Bot\n\n` +
+                   `الأوامر المتاحة:\n\n` +
+                   `/start - بدء البوت\n` +
+                   `/registerfacility - تسجيل منشأة جديدة\n` +
+                   `/join - الانضمام لمنشأة\n` +
+                   `/switch - تبديل المنشأة\n` +
+                   `/members - إدارة الأعضاء\n` +
+                   `/approve - الموافقة على الطلبات\n` +
+                   `/deny - رفض الطلبات\n` +
+                   `/setrole - تعيين الأدوار\n\n` +
+                   `للمساعدة الإضافية، تواصل مع الدعم الفني.`;
+
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة للقائمة الرئيسية', callback_data: 'back_to_menu' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+// Notification type handlers
+bot.action('notif_instant', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    await ctx.reply('🔔 تم تفعيل الإشعارات الفورية', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة لإعدادات الإشعارات', callback_data: 'notification_settings' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+bot.action('notif_daily', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    await ctx.reply('📧 تم تفعيل الإشعارات اليومية', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة لإعدادات الإشعارات', callback_data: 'notification_settings' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+bot.action('notif_weekly', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    await ctx.reply('📊 تم تفعيل التقارير الأسبوعية', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة لإعدادات الإشعارات', callback_data: 'notification_settings' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+bot.action('notif_urgent', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    await ctx.reply('⚠️ تم تفعيل التنبيهات العاجلة', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 العودة لإعدادات الإشعارات', callback_data: 'notification_settings' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+// Reminder handlers
+bot.action('my_reminders', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    const reminders = await prisma.reminder.findMany({
+      where: { userId: user.id, isActive: true },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    if (reminders.length === 0) {
+      return ctx.reply('📅 لا توجد تذكيرات شخصية', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '➕ إنشاء تذكير', callback_data: 'create_reminder' }],
+            [{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]
+          ]
+        }
+      });
+    }
+
+    const message = `📅 تذكيراتي الشخصية:\n\n` +
+                   reminders.map((reminder, index) => 
+                     `${index + 1}. ${reminder.title}\n` +
+                     `   التاريخ: ${reminder.dueDate.toLocaleDateString('ar-SA')}\n` +
+                     `   النوع: ${reminder.type}\n`
+                   ).join('\n');
+
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ إنشاء تذكير', callback_data: 'create_reminder' }],
+          [{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+bot.action('facility_reminders', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    const membership = await prisma.facilityMember.findFirst({
+      where: { userId: user.id, isActive: true },
+      include: { facility: true }
+    });
+
+    if (!membership) {
+      return ctx.reply('❌ يجب أن تكون عضو في منشأة لعرض تذكيراتها');
+    }
+
+    const reminders = await prisma.reminder.findMany({
+      where: { 
+        facilityId: membership.facilityId, 
+        isActive: true 
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    if (reminders.length === 0) {
+      return ctx.reply(`📅 لا توجد تذكيرات لمنشأة ${membership.facility.name}`, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '➕ إنشاء تذكير', callback_data: 'create_reminder' }],
+            [{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]
+          ]
+        }
+      });
+    }
+
+    const message = `📅 تذكيرات منشأة ${membership.facility.name}:\n\n` +
+                   reminders.map((reminder, index) => 
+                     `${index + 1}. ${reminder.title}\n` +
+                     `   التاريخ: ${reminder.dueDate.toLocaleDateString('ar-SA')}\n` +
+                     `   النوع: ${reminder.type}\n`
+                   ).join('\n');
+
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ إنشاء تذكير', callback_data: 'create_reminder' }],
+          [{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+bot.action('create_reminder', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    FlowManager.setFlow(user.tgId.toString(), {
+      flow: 'reminder_creation',
+      step: 1,
+      data: {},
+      createdAt: new Date()
+    });
+
+    await ctx.reply('📝 إنشاء تذكير جديد\n\nأدخل عنوان التذكير:', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❌ إلغاء', callback_data: 'reminders' }]
+        ]
+      }
+    });
+  }, ctx);
+});
+
+bot.action('reminder_skip_description', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const userId = ctx.from.id.toString();
+    const flowState = FlowManager.getFlow(userId);
+    
+    if (!flowState || flowState.flow !== 'reminder_creation') {
+      return ctx.reply('❌ Session expired. Please start over.');
+    }
+
+    try {
+      // Create the reminder without description
+      const user = await SecurityManager.authenticateUser(ctx.from.id);
+      const membership = await prisma.facilityMember.findFirst({
+        where: { userId: user.id, isActive: true }
+      });
+
+      const reminderData = {
+        title: flowState.data.title,
+        description: '',
+        dueDate: flowState.data.dueDate,
+        userId: user.id,
+        type: 'personal',
+        isActive: true
+      };
+
+      if (membership) {
+        reminderData.facilityId = membership.facilityId;
+        reminderData.type = 'facility';
+      }
+
+      await prisma.reminder.create({
+        data: reminderData
+      });
+
+      FlowManager.clearFlow(userId);
+
+      await ctx.reply('✅ تم إنشاء التذكير بنجاح!', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 العودة لإدارة التذكيرات', callback_data: 'reminders' }]
+          ]
+        }
+      });
+    } catch (error) {
+      console.error('Reminder creation error:', error);
+      FlowManager.clearFlow(userId);
+      await ctx.reply('❌ حدث خطأ أثناء إنشاء التذكير. يرجى المحاولة مرة أخرى.');
+    }
+  }, ctx);
+});
+
+// Back to menu handler
+bot.action('back_to_menu', async (ctx) => {
+  await ErrorHandler.safeExecute(async () => {
+    const user = await SecurityManager.authenticateUser(ctx.from.id);
+    if (!user) return;
+
+    await UserController.showMainMenu(ctx, user);
+  }, ctx);
+});
+
+// ===== TEXT MESSAGE HANDLERS =====
+
+// Handle callback queries
+bot.on('callback_query', async (ctx) => {
+  try {
+    await ctx.answerCbQuery().catch(() => {});
+  } catch (error) {
+    console.error('Callback query error:', error);
+  }
+});
+
+// Handle text messages for flow steps
+bot.on('text', async (ctx) => {
+  try {
+    const userId = ctx.from?.id?.toString();
+    if (!userId) return;
+
+    const flowState = FlowManager.getFlow(userId);
+    if (!flowState) return;
+
+    // Apply flow-specific middleware
+    await validateFlowData(ctx, async () => {
+      await validateFlowStepInput(ctx, async () => {
+        // Route to appropriate controller based on flow type
+        switch (flowState.flow) {
+          case 'user_registration':
+            await UserController.handleUserRegistrationStep(ctx, flowState.step, ctx.sanitizedText);
+            break;
+          case 'facility_registration':
+            await FacilityController.handleFacilityRegistrationStep(ctx, flowState.step, ctx.sanitizedText);
+            break;
+          case 'wo_new':
+            await WorkOrderController.handleWorkOrderStep(ctx, flowState.step, ctx.sanitizedText);
+            break;
+          case 'reminder_creation':
+            await handleReminderCreationStep(ctx, flowState.step, ctx.sanitizedText);
+            break;
+          default:
+            await ctx.reply('❌ Unknown flow type. Please start over.');
+            FlowManager.clearFlow(userId);
+        }
+      });
+    });
+  } catch (error) {
+    ErrorHandler.handleError(ctx, error, 'text_message_handler');
+  }
+});
+
+// ===== ERROR HANDLING =====
+
+// Global error handler
+bot.catch((err, ctx) => {
+  console.error('Bot error:', err);
+  ErrorHandler.handleError(ctx, err, 'global_error');
 });
 
 // Webhook handler for Vercel

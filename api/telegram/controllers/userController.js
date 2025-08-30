@@ -9,15 +9,14 @@
  */
 
 const { Markup } = require('telegraf');
-const { PrismaClient } = require('@prisma/client');
+
+// Import Services
+const { UserService, FacilityService, PlanService } = require('../services');
 
 // Import utilities
 const SecurityManager = require('../utils/security');
 const FlowManager = require('../utils/flowManager');
-const PlanManager = require('../utils/planManager');
 const ErrorHandler = require('../utils/errorHandler');
-
-const prisma = new PrismaClient();
 
 class UserController {
   
@@ -175,11 +174,13 @@ What would you like to do today?`;
           
           FlowManager.updateStep(user.tgId.toString(), 5);
           
-          // عرض المنشآت المتاحة
-          const facilities = await prisma.facility.findMany({
-            where: { status: 'active' },
-            orderBy: { name: 'asc' }
-          });
+          // عرض المنشآت المتاحة باستخدام FacilityService
+          const facilitiesResult = await FacilityService.getActiveFacilities();
+          if (!facilitiesResult.success) {
+            return ctx.reply('❌ Error loading facilities. Please try again.');
+          }
+
+          const facilities = facilitiesResult.facilities;
 
           if (facilities.length === 0) {
             return ctx.reply(
@@ -246,47 +247,51 @@ What would you like to do today?`;
         return ctx.reply('❌ No active registration found.');
       }
 
-      // التحقق من وجود المنشأة
-      const facility = await prisma.facility.findUnique({
-        where: { id: BigInt(facilityId) }
-      });
-
-      if (!facility) {
+      // التحقق من وجود المنشأة باستخدام FacilityService
+      const facilityResult = await FacilityService.getFacilityById(facilityId);
+      if (!facilityResult.success) {
         return ctx.reply('❌ Facility not found.');
       }
 
-      // التحقق من حدود الخطة
-      await PlanManager.checkPlanLimit(facilityId, 'members', 1);
+      const facility = facilityResult.facility;
 
-      // تحديث بيانات المستخدم
+      // التحقق من حدود الخطة باستخدام PlanService
+      const planCheck = await PlanService.checkPlanLimit(facilityId, 'members', 1);
+      if (!planCheck.success) {
+        return ctx.reply(`❌ ${planCheck.message}`);
+      }
+
+      // تحديث بيانات المستخدم باستخدام UserService
       const [firstName, ...lastNameParts] = (flowState.data.fullName || '').split(' ');
       const lastName = lastNameParts.join(' ');
 
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          firstName: firstName || null,
-          lastName: lastName || null,
-          email: flowState.data.email,
-          phone: flowState.data.phone,
-          jobTitle: flowState.data.jobTitle,
-          status: 'active',
-          activeFacilityId: BigInt(facilityId)
-        }
+      const updateResult = await UserService.updateUser(user.id, {
+        firstName: firstName || null,
+        lastName: lastName || null,
+        email: flowState.data.email,
+        phone: flowState.data.phone,
+        jobTitle: flowState.data.jobTitle,
+        status: 'active',
+        activeFacilityId: BigInt(facilityId)
       });
 
-      // إنشاء عضوية في المنشأة
+      if (!updateResult.success) {
+        return ctx.reply('❌ Error updating user profile.');
+      }
+
+      // إنشاء عضوية في المنشأة باستخدام UserService
       const role = flowState.data.role === 'supervisor' ? 'supervisor' : 
                    flowState.data.role === 'technician' ? 'technician' : 'user';
 
-      await prisma.facilityMember.create({
-        data: {
-          userId: user.id,
-          facilityId: BigInt(facilityId),
-          role: role,
-          status: 'active'
-        }
-      });
+      const membershipResult = await UserService.createFacilityMembership(
+        user.id, 
+        facilityId, 
+        role
+      );
+
+      if (!membershipResult.success) {
+        return ctx.reply('❌ Error creating facility membership.');
+      }
 
       // مسح الفلوه
       FlowManager.clearFlow(user.tgId.toString());
@@ -313,33 +318,32 @@ What would you like to do today?`;
     return ErrorHandler.safeExecute(async () => {
       const { user } = await SecurityManager.authenticateUser(ctx);
       
-      const activeFacility = user.activeFacilityId ? await prisma.facility.findUnique({
-        where: { id: user.activeFacilityId }
-      }) : null;
+      // الحصول على معلومات المستخدم المحدثة باستخدام UserService
+      const userResult = await UserService.getUserById(user.id);
+      if (!userResult.success) {
+        return ctx.reply('❌ Error loading user profile.');
+      }
 
-      const membership = user.activeFacilityId ? await prisma.facilityMember.findFirst({
-        where: {
-          userId: user.id,
-          facilityId: user.activeFacilityId
-        }
-      }) : null;
+      const updatedUser = userResult.user;
+      const activeFacility = updatedUser.activeFacility;
+      const membership = updatedUser.memberships?.find(m => m.facilityId === updatedUser.activeFacilityId);
 
       const profileMessage = `👤 **User Profile**
 
 📝 **Personal Information:**
-• Name: ${user.firstName || 'N/A'} ${user.lastName || ''}
-• Email: ${user.email || 'Not provided'}
-• Phone: ${user.phone || 'Not provided'}
-• Job Title: ${user.jobTitle || 'Not specified'}
+• Name: ${updatedUser.firstName || 'N/A'} ${updatedUser.lastName || ''}
+• Email: ${updatedUser.email || 'Not provided'}
+• Phone: ${updatedUser.phone || 'Not provided'}
+• Job Title: ${updatedUser.jobTitle || 'Not specified'}
 
 🏢 **Facility Information:**
 • Active Facility: ${activeFacility ? activeFacility.name : 'Not connected'}
 • Role: ${membership ? membership.role.charAt(0).toUpperCase() + membership.role.slice(1) : 'N/A'}
-• Status: ${user.status}
+• Status: ${updatedUser.status}
 
 📅 **Account Information:**
-• Member since: ${user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}
-• Last updated: ${user.updatedAt ? new Date(user.updatedAt).toLocaleDateString() : 'N/A'}`;
+• Member since: ${updatedUser.createdAt ? new Date(updatedUser.createdAt).toLocaleDateString() : 'N/A'}
+• Last updated: ${updatedUser.updatedAt ? new Date(updatedUser.updatedAt).toLocaleDateString() : 'N/A'}`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('✏️ Edit Profile', 'edit_profile')],
@@ -361,19 +365,13 @@ What would you like to do today?`;
     return ErrorHandler.safeExecute(async () => {
       const { user } = await SecurityManager.authenticateUser(ctx);
       
-      // البحث عن المنشآت التي ينتمي إليها المستخدم
-      const memberships = await prisma.facilityMember.findMany({
-        where: {
-          userId: user.id,
-          status: 'active'
-        },
-        include: {
-          facility: true
-        },
-        orderBy: {
-          facility: { name: 'asc' }
-        }
-      });
+      // الحصول على منشآت المستخدم باستخدام UserService
+      const userResult = await UserService.getUserById(user.id);
+      if (!userResult.success) {
+        return ctx.reply('❌ Error loading user data.');
+      }
+
+      const memberships = userResult.user.memberships?.filter(m => m.status === 'active') || [];
 
       if (memberships.length === 0) {
         return ctx.reply(
@@ -423,28 +421,14 @@ What would you like to do today?`;
   static async executeFacilitySwitch(ctx, facilityId) {
     return ErrorHandler.safeExecute(async () => {
       const { user } = await SecurityManager.authenticateUser(ctx);
-      
-      // التحقق من العضوية
-      const membership = await prisma.facilityMember.findFirst({
-        where: {
-          userId: user.id,
-          facilityId: BigInt(facilityId),
-          status: 'active'
-        },
-        include: {
-          facility: true
-        }
-      });
 
-      if (!membership) {
-        return ctx.reply('❌ You are not a member of this facility.');
+      // تبديل المنشأة النشطة باستخدام UserService
+      const switchResult = await UserService.switchActiveFacility(user.id, facilityId);
+      if (!switchResult.success) {
+        return ctx.reply('❌ Error switching facility.');
       }
 
-      // تحديث المنشأة النشطة
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { activeFacilityId: BigInt(facilityId) }
-      });
+      const { user: updatedUser, membership } = switchResult;
 
       await ctx.reply(
         `✅ Successfully switched to ${membership.facility.name}!\n\n` +
