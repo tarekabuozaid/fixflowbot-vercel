@@ -183,7 +183,7 @@ bot.command('start', async (ctx) => {
             inline_keyboard: [
               [{ text: '🏢 Register Facility', callback_data: 'reg_fac_start' }],
               [{ text: '🔗 Join Facility', callback_data: 'join_fac_start' }],
-              [{ text: '📖 Help', callback_data: 'help' }]
+              [{ text: '❓ Help', callback_data: 'help' }]
             ]
           }
         }
@@ -229,6 +229,7 @@ async function showMainMenu(ctx) {
     const buttons = [];
     
     if (user.status === 'active' && user.activeFacilityId) {
+      // === SECTION 1: CORE WORK ===
       buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
       buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
       
@@ -243,6 +244,7 @@ async function showMainMenu(ctx) {
       });
       
       if (membership) {
+        // === SECTION 2: MANAGEMENT ===
         buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
         buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
         
@@ -253,12 +255,12 @@ async function showMainMenu(ctx) {
         }
       }
       
-      // Add user registration options
+      // === SECTION 3: REGISTRATION ===
       buttons.push([Markup.button.callback('👤 Register as User', 'register_user')]);
       buttons.push([Markup.button.callback('🔧 Register as Technician', 'register_technician')]);
       buttons.push([Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')]);
       
-      // Add notifications button
+      // === SECTION 4: NOTIFICATIONS & REMINDERS ===
       const unreadCount = await prisma.notification.count({
         where: { userId: user.id, isRead: false }
       });
@@ -283,19 +285,24 @@ async function showMainMenu(ctx) {
       const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
       buttons.push([Markup.button.callback(reminderText, 'reminders')]);
       
-      // Add reports button for admins
+      // === SECTION 5: REPORTS ===
       if (membership) {
         buttons.push([Markup.button.callback('📊 Advanced Reports', 'advanced_reports')]);
       }
     } else {
+      // === NEW USERS SECTION ===
       buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
       buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
     }
     
+    // === MASTER SECTION ===
     if (isMaster(ctx)) {
       buttons.push([Markup.button.callback('🛠 Master Panel', 'master_panel')]);
       buttons.push([Markup.button.callback('👑 Master Dashboard', 'master_dashboard')]);
     }
+    
+    // === HELP SECTION ===
+    buttons.push([Markup.button.callback('❓ Help', 'help')]);
     
     await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
       reply_markup: { inline_keyboard: buttons }
@@ -3852,10 +3859,16 @@ bot.action('help', async (ctx) => {
     `• **Business:** 100 members, 1000 work orders\n\n` +
     `📞 **Support:** Contact your facility administrator for assistance.`;
   
+  const helpButtons = [
+    [{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }],
+    [{ text: '📖 Quick Start', callback_data: 'quick_start_guide' }],
+    [{ text: '🔧 Commands List', callback_data: 'commands_list' }]
+  ];
+  
   await ctx.reply(helpMessage, {
     parse_mode: 'Markdown',
     reply_markup: {
-      inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]]
+      inline_keyboard: helpButtons
     }
   });
 });
@@ -3864,6 +3877,77 @@ bot.action('help', async (ctx) => {
 bot.action('back_to_menu', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   await showMainMenu(ctx);
+});
+
+// === Additional Help Functions ===
+
+// Quick Start Guide
+bot.action('quick_start_guide', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  const quickStartMessage = 
+    `🚀 **Quick Start Guide**\n\n` +
+    `**Step 1: Get Started**\n` +
+    `• Send /start to begin\n` +
+    `• Register a facility or join existing one\n` +
+    `• Complete your profile setup\n\n` +
+    `**Step 2: Create Work Orders**\n` +
+    `• Click "➕ Create Work Order"\n` +
+    `• Fill in the required details\n` +
+    `• Submit your maintenance request\n\n` +
+    `**Step 3: Track Progress**\n` +
+    `• View "📋 My Work Orders"\n` +
+    `• Check status updates\n` +
+    `• Receive notifications\n\n` +
+    `**Step 4: Manage (Admins)**\n` +
+    `• Access "🏢 Facility Dashboard"\n` +
+    `• Manage members and roles\n` +
+    `• View reports and analytics\n\n` +
+    `**Need Help?** Click "❓ Help" anytime!`;
+  
+  await ctx.reply(quickStartMessage, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🔙 Back to Help', callback_data: 'help' }],
+        [{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]
+      ]
+    }
+  });
+});
+
+// Commands List
+bot.action('commands_list', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  const commandsMessage = 
+    `🔧 **Available Commands**\n\n` +
+    `**Basic Commands:**\n` +
+    `• /start - Start the bot\n` +
+    `• /help - Show help menu\n\n` +
+    `**Facility Commands:**\n` +
+    `• /registerfacility - Register new facility\n` +
+    `• /join - Join existing facility\n` +
+    `• /switch - Switch between facilities\n\n` +
+    `**Management Commands:**\n` +
+    `• /members - View facility members\n` +
+    `• /approve - Approve pending requests\n` +
+    `• /deny - Deny pending requests\n` +
+    `• /setrole - Set member role\n\n` +
+    `**Master Commands:**\n` +
+    `• /master - Access master panel\n` +
+    `• /system - System status\n\n` +
+    `**Note:** Most features are available through buttons for easier use.`;
+  
+  await ctx.reply(commandsMessage, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🔙 Back to Help', callback_data: 'help' }],
+        [{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]
+      ]
+    }
+  });
 });
 
 // === Advanced Reports System ===
