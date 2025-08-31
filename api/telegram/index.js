@@ -839,7 +839,7 @@ bot.on('text', async (ctx, next) => {
         // Step 1: Facility Name
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Facility registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -861,7 +861,7 @@ bot.on('text', async (ctx, next) => {
           
           flowState.data.name = sanitizedName;
           flowState.step = 2;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           return ctx.reply(
             `✅ **Facility Name:** ${flowState.data.name}\n\n` +
@@ -875,7 +875,7 @@ bot.on('text', async (ctx, next) => {
         // Step 2: City
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Facility registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -888,7 +888,7 @@ bot.on('text', async (ctx, next) => {
           
           flowState.data.city = sanitizedCity;
           flowState.step = 3;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           return ctx.reply(
             `✅ **Facility Name:** ${flowState.data.name}\n` +
@@ -903,7 +903,7 @@ bot.on('text', async (ctx, next) => {
         // Step 3: Phone
         if (flowState.step === 3) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Facility registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -916,7 +916,7 @@ bot.on('text', async (ctx, next) => {
           
           flowState.data.phone = sanitizedPhone;
           flowState.step = 4;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           const planButtons = [
             [{ text: '🆓 Free Plan', callback_data: 'regfac_plan|Free' }],
@@ -953,7 +953,7 @@ bot.on('text', async (ctx, next) => {
         // Step 1: Full Name
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -970,7 +970,7 @@ bot.on('text', async (ctx, next) => {
           flowState.data.lastName = nameParts.slice(1).join(' ') || null;
           flowState.data.fullName = sanitizedName;
           flowState.step = 2;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
@@ -984,7 +984,7 @@ bot.on('text', async (ctx, next) => {
         // Step 2: Email (optional)
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1003,7 +1003,7 @@ bot.on('text', async (ctx, next) => {
           }
           
           flowState.step = 3;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
@@ -1018,7 +1018,7 @@ bot.on('text', async (ctx, next) => {
         // Step 3: Phone (optional)
         if (flowState.step === 3) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1037,7 +1037,7 @@ bot.on('text', async (ctx, next) => {
           }
           
           flowState.step = 4;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
@@ -1054,7 +1054,7 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Job Title (optional)
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1071,7 +1071,7 @@ bot.on('text', async (ctx, next) => {
           }
           
           flowState.step = 5;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           // Show facility selection
           const facilities = await prisma.facility.findMany({
@@ -1080,7 +1080,7 @@ bot.on('text', async (ctx, next) => {
           });
           
           if (!facilities.length) {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('⚠️ No active facilities found. Please contact the system administrator.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1249,7 +1249,7 @@ bot.on('text', async (ctx, next) => {
         // Step 1: Title
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Reminder creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1277,7 +1277,7 @@ bot.on('text', async (ctx, next) => {
         // Step 2: Description
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Reminder creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1313,7 +1313,7 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Date
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Reminder creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1494,7 +1494,7 @@ bot.action('regfac_cancel', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
     const { user } = await authenticateUser(ctx);
-    flows.delete(user.tgId.toString());
+    flows.delete(ctx.from.id);
     await ctx.reply('❌ Facility registration cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
@@ -1509,7 +1509,7 @@ bot.action('user_reg_cancel', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
     const { user } = await authenticateUser(ctx);
-    flows.delete(user.tgId.toString());
+    flows.delete(ctx.from.id);
     await ctx.reply('❌ User registration cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
@@ -5322,7 +5322,7 @@ bot.action('wo_manage_all', async (ctx) => {
     
     const workOrders = await prisma.workOrder.findMany({
       where: { facilityId: user.activeFacilityId },
-      include: { createdByUser: true },
+      include: { byUser: true },
       orderBy: { createdAt: 'desc' },
       take: 10
     });
@@ -5342,7 +5342,7 @@ bot.action('wo_manage_all', async (ctx) => {
       
       woList += `${index + 1}. ${statusEmoji[wo.status]} **WO#${wo.id.toString()}**\n`;
       woList += `   📝 ${wo.description.slice(0, 50)}${wo.description.length > 50 ? '...' : ''}\n`;
-      woList += `   👤 ${wo.createdByUser.firstName || 'Unknown'}\n`;
+      woList += `   👤 ${wo.byUser?.firstName || 'Unknown'}\n`;
       woList += `   📅 ${wo.createdAt.toLocaleDateString()}\n\n`;
     });
     
