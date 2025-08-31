@@ -1,6 +1,12 @@
 const { Telegraf, Markup } = require('telegraf');
 const { PrismaClient } = require('@prisma/client');
 
+// Import new modular utilities
+const SecurityManager = require('./utils/security');
+const FlowManager = require('./utils/flowManager');
+const PlanManager = require('./utils/planManager');
+const ErrorHandler = require('./utils/errorHandler');
+
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {
   try {
@@ -27,584 +33,12 @@ const prisma = new PrismaClient({
   }
 });
 
-// ===== INTEGRATED UTILITY CLASSES =====
-// (Consolidated from separate modules for Vercel Hobby plan optimization)
+// ===== LEGACY FUNCTIONS (for backward compatibility) =====
 
-// Rate limiting per user (requests per minute)
-const rateLimitMap = new Map();
+// Legacy rate limiting (will be replaced by SecurityManager)
+const rateLimit = new Map();
 const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;
 const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;
-
-// Flow management
-const flows = new Map();
-
-/**
- * Security Manager - Handles authentication, validation, and security
- */
-class SecurityManager {
-  /**
-   * Sanitize user input to prevent XSS and injection attacks
-   * @param {string} input - User input to sanitize
-   * @param {number} maxLength - Maximum allowed length
-   * @returns {string} Sanitized input
-   */
-  static sanitizeInput(input, maxLength = 1000) {
-    if (!input || typeof input !== 'string') return '';
-    
-    // Remove null bytes and control characters
-    let sanitized = input.replace(/[\x00-\x1F\x7F]/g, '');
-    
-    // Remove HTML tags
-    sanitized = sanitized.replace(/<[^>]*>/g, '');
-    
-    // Remove script tags and dangerous patterns
-    sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    sanitized = sanitized.replace(/javascript:/gi, '');
-    sanitized = sanitized.replace(/on\w+\s*=/gi, '');
-    
-    // Limit length
-    if (sanitized.length > maxLength) {
-      sanitized = sanitized.substring(0, maxLength);
-    }
-    
-    return sanitized.trim();
-  }
-
-  /**
-   * Authenticate and validate user
-   * @param {Object} ctx - Telegram context
-   * @returns {Object} User data and authentication status
-   */
-  static async authenticateUser(ctx) {
-    try {
-      // Validate Telegram user data
-      if (!ctx.from || !ctx.from.id) {
-        throw new Error('Invalid user data');
-      }
-      
-      const userId = ctx.from.id;
-      
-      // Rate limiting check
-      const now = Date.now();
-      const userRateLimit = rateLimitMap.get(userId) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
-      
-      if (now > userRateLimit.resetTime) {
-        userRateLimit.count = 0;
-        userRateLimit.resetTime = now + RATE_LIMIT_WINDOW;
-      }
-      
-      if (userRateLimit.count >= RATE_LIMIT) {
-        throw new Error('Rate limit exceeded');
-      }
-      
-      userRateLimit.count++;
-      rateLimitMap.set(userId, userRateLimit);
-      
-      // Get or create user from database
-      const tgId = BigInt(userId);
-      let user = await prisma.user.findUnique({ where: { tgId } });
-      
-      let isNew = false;
-      
-      if (!user) {
-        // Create new user with sanitized data
-        const firstName = this.sanitizeInput(ctx.from.first_name || '', 50);
-        const lastName = this.sanitizeInput(ctx.from.last_name || '', 50);
-        const username = this.sanitizeInput(ctx.from.username || '', 32);
-        
-        user = await prisma.user.create({
-          data: { 
-            tgId, 
-            firstName: firstName || null,
-            lastName: lastName || null,
-            username: username || null,
-            status: 'pending' 
-          }
-        });
-        
-        isNew = true;
-        console.log(`🔐 New user created: ${userId} (${firstName || 'Unknown'})`);
-      }
-      
-      return { user, isNew };
-    } catch (error) {
-      console.error('Authentication error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Validate facility access and permissions
-   */
-  static async validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
-    try {
-      const { user } = await this.authenticateUser(ctx);
-      
-      if (!facilityId) {
-        throw new Error('Facility ID required');
-      }
-      
-      const facilityIdBigInt = BigInt(facilityId);
-      
-      const facility = await prisma.facility.findUnique({
-        where: { id: facilityIdBigInt }
-      });
-      
-      if (!facility) {
-        throw new Error('Facility not found');
-      }
-      
-      if (facility.status !== 'active') {
-        throw new Error('Facility is inactive');
-      }
-      
-      const membership = await prisma.facilityMember.findFirst({
-        where: { 
-          userId: user.id, 
-          facilityId: facilityIdBigInt,
-          status: 'active'
-        }
-      });
-      
-      if (!membership) {
-        throw new Error('User not a member of this facility');
-      }
-      
-      if (requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
-        throw new Error('Insufficient permissions');
-      }
-      
-      return { user, facility, membership };
-    } catch (error) {
-      console.error('Facility access validation error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Validate work order access and permissions
-   */
-  static async validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
-    try {
-      const { user } = await this.authenticateUser(ctx);
-      
-      if (!workOrderId) {
-        throw new Error('Work order ID required');
-      }
-      
-      const workOrderIdBigInt = BigInt(workOrderId);
-      
-      const workOrder = await prisma.workOrder.findUnique({
-        where: { id: workOrderIdBigInt },
-        include: { facility: true }
-      });
-      
-      if (!workOrder) {
-        throw new Error('Work order not found');
-      }
-      
-      const membership = await prisma.facilityMember.findFirst({
-        where: { 
-          userId: user.id, 
-          facilityId: workOrder.facilityId,
-          status: 'active'
-        }
-      });
-      
-      if (!membership) {
-        throw new Error('User not a member of this facility');
-      }
-      
-      if (requiredRoles.length > 0 && !requiredRoles.includes(membership.role)) {
-        throw new Error('Insufficient permissions for this operation');
-      }
-      
-      return { user, workOrder, membership };
-    } catch (error) {
-      console.error('Work order access validation error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Validate master access
-   */
-  static validateMasterAccess(ctx) {
-    const MASTER_ID = process.env.MASTER_ID || '';
-    if (String(ctx.from?.id || '') !== String(MASTER_ID)) {
-      throw new Error('Master access required');
-    }
-    return true;
-  }
-
-  /**
-   * Input validation helpers
-   */
-  static validateEmail(email) {
-    if (!email) return null;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email) ? email : null;
-  }
-
-  static validatePhone(phone) {
-    if (!phone) return null;
-    const cleanPhone = phone.replace(/\D/g, '');
-    return cleanPhone.length >= 7 && cleanPhone.length <= 15 ? cleanPhone : null;
-  }
-
-  static validateName(name) {
-    if (!name) return null;
-    const sanitized = this.sanitizeInput(name, 50);
-    return sanitized.length >= 2 ? sanitized : null;
-  }
-}
-
-/**
- * Flow Manager - Handles user flow states and session management
- */
-class FlowManager {
-  /**
-   * Set user flow state
-   */
-  static setFlow(userId, flow, step, data = {}) {
-    flows.set(userId.toString(), { 
-      flow, 
-      step, 
-      data, 
-      userId: userId.toString(),
-      timestamp: Date.now() 
-    });
-  }
-
-  /**
-   * Get user flow state
-   */
-  static getFlow(userId) {
-    return flows.get(userId.toString());
-  }
-
-  /**
-   * Update flow step
-   */
-  static updateStep(userId, step) {
-    const flow = flows.get(userId.toString());
-    if (flow) {
-      flow.step = step;
-      flow.timestamp = Date.now();
-      flows.set(userId.toString(), flow);
-    }
-  }
-
-  /**
-   * Update flow data
-   */
-  static updateData(userId, data) {
-    const flow = flows.get(userId.toString());
-    if (flow) {
-      flow.data = { ...flow.data, ...data };
-      flow.timestamp = Date.now();
-      flows.set(userId.toString(), flow);
-    }
-  }
-
-  /**
-   * Clear user flow
-   */
-  static clearFlow(userId) {
-    flows.delete(userId.toString());
-  }
-
-  /**
-   * Check if user has active flow
-   */
-  static hasActiveFlow(userId, flowType = null) {
-    const flow = flows.get(userId.toString());
-    if (!flow) return false;
-    
-    if (flowType && flow.flow !== flowType) return false;
-    
-    // Check if flow is not expired (1 hour)
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-    return (now - flow.timestamp) < oneHour;
-  }
-
-  /**
-   * Validate flow ownership
-   */
-  static validateFlowOwnership(userId, flowState) {
-    return flowState && flowState.userId === userId.toString();
-  }
-
-  /**
-   * Clean up expired flows
-   */
-  static cleanupExpiredFlows() {
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-    
-    for (const [userId, flow] of flows.entries()) {
-      if ((now - flow.timestamp) > oneHour) {
-        flows.delete(userId);
-      }
-    }
-  }
-}
-
-/**
- * Plan Manager - Handles plan limits and validation
- */
-class PlanManager {
-  static PLAN_LIMITS = {
-    Free: {
-      members: 5,
-      workOrders: 50,
-      reports: 3,
-      reminders: 10
-    },
-    Pro: {
-      members: 20,
-      workOrders: 200,
-      reports: 15,
-      reminders: 50
-    },
-    Business: {
-      members: 100,
-      workOrders: 1000,
-      reports: 100,
-      reminders: 200
-    }
-  };
-
-  /**
-   * Check if facility can perform action within plan limits
-   */
-  static async checkPlanLimit(facilityId, action, count = 1) {
-    try {
-      const facility = await prisma.facility.findUnique({
-        where: { id: BigInt(facilityId) }
-      });
-      
-      if (!facility) {
-        throw new Error('Facility not found');
-      }
-      
-      const plan = facility.planTier || 'Free';
-      const limits = this.PLAN_LIMITS[plan];
-      
-      if (!limits) {
-        throw new Error('Invalid plan');
-      }
-      
-      let currentCount = 0;
-      
-      switch (action) {
-        case 'members':
-          currentCount = await prisma.facilityMember.count({
-            where: { facilityId: BigInt(facilityId) }
-          });
-          break;
-        case 'workOrders':
-          currentCount = await prisma.workOrder.count({
-            where: { facilityId: BigInt(facilityId) }
-          });
-          break;
-        case 'reports':
-          currentCount = await prisma.report.count({
-            where: { facilityId: BigInt(facilityId) }
-          });
-          break;
-        case 'reminders':
-          currentCount = await prisma.reminder.count({
-            where: { facilityId: BigInt(facilityId) }
-          });
-          break;
-        default:
-          throw new Error('Invalid action');
-      }
-      
-      const newTotal = currentCount + count;
-      const limit = limits[action];
-      
-      if (newTotal > limit) {
-        throw new Error(`${action} limit exceeded for ${plan} plan. Limit: ${limit}, Current: ${currentCount}, Requested: ${count}`);
-      }
-      
-      return { 
-        allowed: true, 
-        current: currentCount, 
-        limit, 
-        plan,
-        remaining: limit - currentCount
-      };
-    } catch (error) {
-      console.error('Plan limit check error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get comprehensive plan information for facility
-   */
-  static async getPlanInfo(facilityId) {
-    try {
-      const facility = await prisma.facility.findUnique({
-        where: { id: BigInt(facilityId) }
-      });
-      
-      if (!facility) {
-        throw new Error('Facility not found');
-      }
-      
-      const plan = facility.planTier || 'Free';
-      const limits = this.PLAN_LIMITS[plan];
-      
-      const [members, workOrders, reports, reminders] = await Promise.all([
-        prisma.facilityMember.count({ where: { facilityId: BigInt(facilityId) } }),
-        prisma.workOrder.count({ where: { facilityId: BigInt(facilityId) } }),
-        prisma.report.count({ where: { facilityId: BigInt(facilityId) } }),
-        prisma.reminder.count({ where: { facilityId: BigInt(facilityId) } })
-      ]);
-      
-      return {
-        plan,
-        limits,
-        usage: {
-          members,
-          workOrders,
-          reports,
-          reminders
-        },
-        percentages: {
-          members: Math.round((members / limits.members) * 100),
-          workOrders: Math.round((workOrders / limits.workOrders) * 100),
-          reports: Math.round((reports / limits.reports) * 100),
-          reminders: Math.round((reminders / limits.reminders) * 100)
-        },
-        remaining: {
-          members: limits.members - members,
-          workOrders: limits.workOrders - workOrders,
-          reports: limits.reports - reports,
-          reminders: limits.reminders - reminders
-        }
-      };
-    } catch (error) {
-      console.error('Get plan info error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Upgrade facility plan
-   */
-  static async upgradePlan(facilityId, newPlan) {
-    try {
-      if (!this.PLAN_LIMITS[newPlan]) {
-        throw new Error('Invalid plan tier');
-      }
-      
-      const facility = await prisma.facility.update({
-        where: { id: BigInt(facilityId) },
-        data: { planTier: newPlan }
-      });
-      
-      return {
-        success: true,
-        facility,
-        newPlan,
-        limits: this.PLAN_LIMITS[newPlan]
-      };
-    } catch (error) {
-      console.error('Plan upgrade error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get all available plans
-   */
-  static getAvailablePlans() {
-    return this.PLAN_LIMITS;
-  }
-}
-
-/**
- * Error Handler - Centralized error handling and user messaging
- */
-class ErrorHandler {
-  /**
-   * Handle errors with appropriate user messages
-   */
-  static async handleError(error, ctx, operation = 'Unknown') {
-    const userId = ctx.from?.id || 'unknown';
-    const username = ctx.from?.username || 'unknown';
-    const chatId = ctx.chat?.id || 'unknown';
-    
-    // Log error details
-    console.error(`🚨 Error in ${operation} - User: ${userId} (@${username}), Chat: ${chatId}`, error);
-    
-    // Determine error type and send appropriate message
-    let userMessage = '⚠️ An error occurred. Please try again.';
-    let shouldLogSecurity = false;
-    
-    if (error.message.includes('Rate limit exceeded')) {
-      userMessage = '⚠️ Too many requests. Please wait a moment and try again.';
-      shouldLogSecurity = true;
-    } else if (error.message.includes('Invalid user data')) {
-      userMessage = '⚠️ Invalid user data. Please restart the bot.';
-      shouldLogSecurity = true;
-    } else if (error.message.includes('Insufficient permissions')) {
-      userMessage = '⚠️ You need admin privileges for this action.';
-      shouldLogSecurity = true;
-    } else if (error.message.includes('Facility not found')) {
-      userMessage = '⚠️ Facility not found. Please contact support.';
-    } else if (error.message.includes('Work order not found')) {
-      userMessage = '⚠️ Work order not found.';
-    } else if (error.message.includes('User not a member')) {
-      userMessage = '⚠️ You are not a member of this facility.';
-    } else if (error.message.includes('limit exceeded')) {
-      userMessage = `⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`;
-    } else if (error.message.includes('Master access required')) {
-      userMessage = '🚫 Only master can perform this action.';
-      shouldLogSecurity = true;
-    } else if (error.message.includes('Session expired')) {
-      userMessage = '⚠️ Session expired. Please start over.';
-    } else if (error.message.includes('Invalid input')) {
-      userMessage = '⚠️ Invalid input. Please check your data and try again.';
-    }
-    
-    // Log security events
-    if (shouldLogSecurity) {
-      console.warn(`🔒 Security Event - User ${userId} attempted unauthorized access in ${operation}`);
-    }
-    
-    // Send error message to user
-    try {
-      await ctx.reply(userMessage);
-    } catch (replyError) {
-      console.error('Failed to send error message to user:', replyError);
-    }
-  }
-
-  /**
-   * Safe execution wrapper
-   */
-  static async safeExecute(operation, ctx, operationName = 'operation') {
-    try {
-      return await operation();
-    } catch (error) {
-      await this.handleError(error, ctx, operationName);
-      return null;
-    }
-  }
-}
-
-// Clean up old flows every 30 minutes
-setInterval(() => {
-  FlowManager.cleanupExpiredFlows();
-}, 30 * 60 * 1000);
-
-// ===== LEGACY FUNCTIONS (for backward compatibility) =====
 
 // Legacy sanitization function (will be replaced by SecurityManager)
 function sanitizeInput(input, maxLength = 1000) {
@@ -650,6 +84,28 @@ function validateMasterAccess(ctx) {
     throw error;
   }
 }
+
+// Plan limits and validation
+const PLAN_LIMITS = {
+  Free: {
+    members: 5,
+    workOrders: 50,
+    reports: 3,
+    reminders: 10
+  },
+  Pro: {
+    members: 20,
+    workOrders: 200,
+    reports: 15,
+    reminders: 50
+  },
+  Business: {
+    members: 100,
+    workOrders: 1000,
+    reports: 100,
+    reminders: 200
+  }
+};
 
 // Legacy plan limit check (will be replaced by PlanManager)
 async function checkPlanLimit(facilityId, action, count = 1) {
@@ -740,6 +196,12 @@ bot.command('start', async (ctx) => {
 
 // Legacy flow management (will be replaced by FlowManager)
 // Note: FlowManager handles cleanup automatically
+const flows = new Map();
+
+// Legacy cleanup (FlowManager handles this automatically)
+setInterval(() => {
+  FlowManager.cleanupExpiredFlows();
+}, 30 * 60 * 1000); // Check every 30 minutes
 
 // Helpers with security
 const isMaster = (ctx) => {

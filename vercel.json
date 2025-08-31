@@ -2,7 +2,8 @@
   "version": 2,
   "functions": {
     "api/telegram/index.js": {
-      "maxDuration": 30
+      "maxDuration": 30,
+      "memory": 1024
     }
   },
   "routes": [
@@ -10,5 +11,10 @@
       "src": "/api/telegram",
       "dest": "/api/telegram/index.js"
     }
-  ]
+  ],
+  "build": {
+    "env": {
+      "NODE_ENV": "production"
+    }
+  }
 }
