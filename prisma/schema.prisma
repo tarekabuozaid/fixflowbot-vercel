@@ -182,11 +182,11 @@ enum UserStatus {
 }
 
 enum WorkOrderStatus {
-  pending
   open
   in_progress
   done
   closed
+  pending
 }
 
 enum RequestStatus {
