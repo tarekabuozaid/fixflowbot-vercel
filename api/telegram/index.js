@@ -229,82 +229,36 @@ async function showMainMenu(ctx) {
     const buttons = [];
     
     if (user.status === 'active' && user.activeFacilityId) {
-      // === SECTION 1: CORE WORK ===
-      buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
-      buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
+      // === MAIN MENU - 4 MAIN BUTTONS ===
+      buttons.push([
+        Markup.button.callback('🏠 Home', 'menu_home'),
+        Markup.button.callback('📊 Reports', 'menu_reports')
+      ]);
       
-      // Check if user is facility admin or supervisor
-      const membership = await prisma.facilityMember.findFirst({
-        where: { 
-          userId: user.id, 
-          facilityId: user.activeFacilityId,
-          status: 'active',
-          role: { in: ['facility_admin', 'supervisor'] }
-        }
-      });
+      buttons.push([
+        Markup.button.callback('🔧 Work', 'menu_work'),
+        Markup.button.callback('👑 Admin', 'menu_admin')
+      ]);
       
-      if (membership) {
-        // === SECTION 2: MANAGEMENT ===
-        buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
-        buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
-        
-        // Add role management for facility admins
-        if (membership.role === 'facility_admin') {
-          buttons.push([Markup.button.callback('👥 Manage Members', 'manage_members')]);
-          buttons.push([Markup.button.callback('🔐 Role Management', 'role_management')]);
-        }
-      }
-      
-      // === SECTION 3: REGISTRATION ===
-      buttons.push([Markup.button.callback('👤 Register as User', 'register_user')]);
-      buttons.push([Markup.button.callback('🔧 Register as Technician', 'register_technician')]);
-      buttons.push([Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')]);
-      
-      // === SECTION 4: NOTIFICATIONS & REMINDERS ===
-      const unreadCount = await prisma.notification.count({
-        where: { userId: user.id, isRead: false }
-      });
-      
-      const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
-      buttons.push([Markup.button.callback(notificationText, 'notifications')]);
-      
-      // Add smart notifications button for admins
-      if (membership) {
-        buttons.push([Markup.button.callback('🤖 Smart Alerts', 'smart_notifications')]);
-      }
-      
-      // Add reminders button
-      const activeReminders = await prisma.reminder.count({
-        where: { 
-          facilityId: user.activeFacilityId,
-          isActive: true,
-          scheduledFor: { gte: new Date() }
-        }
-      });
-      
-      const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
-      buttons.push([Markup.button.callback(reminderText, 'reminders')]);
-      
-      // === SECTION 5: REPORTS ===
-      if (membership) {
-        buttons.push([Markup.button.callback('📊 Advanced Reports', 'advanced_reports')]);
+      // === MASTER SECTION ===
+      if (isMaster(ctx)) {
+        buttons.push([
+          Markup.button.callback('🛠 Master Panel', 'master_panel'),
+          Markup.button.callback('👑 Master Dashboard', 'master_dashboard')
+        ]);
       }
     } else {
       // === NEW USERS SECTION ===
-      buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
-      buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
-    }
-    
-    // === MASTER SECTION ===
-    if (isMaster(ctx)) {
-      buttons.push([Markup.button.callback('🛠 Master Panel', 'master_panel')]);
-      buttons.push([Markup.button.callback('👑 Master Dashboard', 'master_dashboard')]);
+      buttons.push([
+        Markup.button.callback('🏢 Register Facility', 'reg_fac_start'),
+        Markup.button.callback('🔗 Join Facility', 'join_fac_start')
+      ]);
     }
     
     // === HELP SECTION ===
     buttons.push([Markup.button.callback('❓ Help', 'help')]);
     
-    await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
+    await ctx.reply('👋 Welcome to FixFlow! Choose a category:', {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
@@ -3877,6 +3831,166 @@ bot.action('help', async (ctx) => {
 bot.action('back_to_menu', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   await showMainMenu(ctx);
+});
+
+// === Main Menu Sub-Menus ===
+
+// Home Menu
+bot.action('menu_home', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  try {
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    
+    const unreadCount = await prisma.notification.count({
+      where: { userId: user.id, isRead: false }
+    });
+    
+    const activeReminders = await prisma.reminder.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        isActive: true,
+        scheduledFor: { gte: new Date() }
+      }
+    });
+    
+    const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
+    const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
+    
+    const buttons = [
+      [
+        Markup.button.callback(notificationText, 'notifications'),
+        Markup.button.callback(reminderText, 'reminders')
+      ],
+      [
+        Markup.button.callback('👤 Register as User', 'register_user'),
+        Markup.button.callback('🔧 Register as Technician', 'register_technician')
+      ],
+      [
+        Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')
+      ],
+      [Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply('🏠 **Home Dashboard**\n\nQuick access to your main features:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in home menu:', error);
+    await ctx.reply('⚠️ An error occurred while loading home menu.');
+  }
+});
+
+// Reports Menu
+bot.action('menu_reports', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  try {
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        status: 'active',
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ You need admin privileges to access reports.', {
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 Back to Main Menu', callback_data: 'back_to_menu' }]]
+        }
+      });
+    }
+    
+    const buttons = [
+      [Markup.button.callback('📊 Advanced Reports', 'advanced_reports')],
+      [Markup.button.callback('📈 KPI Dashboard', 'report_kpi_dashboard')],
+      [Markup.button.callback('👥 Team Performance', 'report_team_performance')],
+      [Markup.button.callback('📊 Trend Analysis', 'report_trend_analysis')],
+      [Markup.button.callback('💰 Cost Analysis', 'report_cost_analysis')],
+      [Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply('📊 **Reports & Analytics**\n\nChoose a report type:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in reports menu:', error);
+    await ctx.reply('⚠️ An error occurred while loading reports menu.');
+  }
+});
+
+// Work Menu
+bot.action('menu_work', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  const buttons = [
+    [
+      Markup.button.callback('➕ Create Work Order', 'wo_new'),
+      Markup.button.callback('📋 My Work Orders', 'wo_list')
+    ],
+    [Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')],
+    [Markup.button.callback('📊 Work Statistics', 'wo_stats')],
+    [Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]
+  ];
+  
+  await ctx.reply('🔧 **Work Orders Management**\n\nChoose an option:', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: buttons }
+  });
+});
+
+// Admin Menu
+bot.action('menu_admin', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  try {
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    const membership = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        status: 'active',
+        role: { in: ['facility_admin', 'supervisor'] }
+      }
+    });
+    
+    if (!membership) {
+      return ctx.reply('⚠️ You need admin privileges to access admin features.', {
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 Back to Main Menu', callback_data: 'back_to_menu' }]]
+        }
+      });
+    }
+    
+    const buttons = [
+      [
+        Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard'),
+        Markup.button.callback('👥 Manage Members', 'manage_members')
+      ],
+      [
+        Markup.button.callback('🔐 Role Management', 'role_management'),
+        Markup.button.callback('🤖 Smart Alerts', 'smart_notifications')
+      ],
+      [
+        Markup.button.callback('⏰ Create Reminder', 'create_reminder'),
+        Markup.button.callback('📊 Facility Stats', 'facility_stats')
+      ],
+      [Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply('👑 **Admin Panel**\n\nChoose an admin option:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in admin menu:', error);
+    await ctx.reply('⚠️ An error occurred while loading admin menu.');
+  }
 });
 
 // === Additional Help Functions ===
