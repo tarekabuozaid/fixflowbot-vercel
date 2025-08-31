@@ -164,26 +164,26 @@ bot.command('start', async (ctx) => {
     
     if (isNew) {
       await ctx.reply(
-        `🎉 **مرحباً بك في FixFlow!**\n\n` +
-        `👋 أهلاً وسهلاً ${user.firstName || 'بك'}!\n\n` +
-        `🔧 **FixFlow** هو حل إدارة الصيانة الشامل الخاص بك.\n\n` +
-        `**ما يمكنك فعله:**\n` +
-        `• إرسال طلبات الصيانة\n` +
-        `• تتبع أوامر العمل\n` +
-        `• استلام الإشعارات\n` +
-        `• الوصول للتقارير والتحليلات\n\n` +
-        `**الخطوات التالية:**\n` +
-        `1. سجل منشأة أو انضم لمنشأة موجودة\n` +
-        `2. ابدأ في إدارة مهام الصيانة\n` +
-        `3. استكشف جميع الميزات\n\n` +
-        `دعنا نبدأ! 🚀`,
+        `🎉 **Welcome to FixFlow!**\n\n` +
+        `👋 Hello ${user.firstName || 'there'}!\n\n` +
+        `🔧 **FixFlow** is your comprehensive maintenance management solution.\n\n` +
+        `**What you can do:**\n` +
+        `• Submit maintenance requests\n` +
+        `• Track work orders\n` +
+        `• Receive notifications\n` +
+        `• Access reports and analytics\n\n` +
+        `**Next Steps:**\n` +
+        `1. Register a facility or join an existing one\n` +
+        `2. Start managing your maintenance tasks\n` +
+        `3. Explore all features\n\n` +
+        `Let's get started! 🚀`,
         {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🏢 تسجيل منشأة', callback_data: 'reg_fac_start' }],
-              [{ text: '🔗 الانضمام لمنشأة', callback_data: 'join_fac_start' }],
-              [{ text: '📖 المساعدة', callback_data: 'help' }]
+              [{ text: '🏢 Register Facility', callback_data: 'reg_fac_start' }],
+              [{ text: '🔗 Join Facility', callback_data: 'join_fac_start' }],
+              [{ text: '📖 Help', callback_data: 'help' }]
             ]
           }
         }
@@ -223,21 +223,14 @@ async function getUser(ctx) {
   return user;
 }
 
-// === دالة عرض القائمة الرئيسية المحسنة ===
-// التحسينات:
-// 1. ترجمة جميع الأزرار للعربية
-// 2. تنظيم الأزرار في أقسام منطقية
-// 3. تحسين رسالة الترحيب
-// 4. إضافة زر المساعدة
 async function showMainMenu(ctx) {
   try {
     const { user } = await SecurityManager.authenticateUser(ctx);
     const buttons = [];
     
     if (user.status === 'active' && user.activeFacilityId) {
-      // === القسم الأول: العمل الأساسي ===
-      buttons.push([Markup.button.callback('🔧 إنشاء طلب صيانة', 'wo_new')]);
-      buttons.push([Markup.button.callback('📋 طلباتي', 'wo_list')]);
+      buttons.push([Markup.button.callback('➕ Create Work Order', 'wo_new')]);
+      buttons.push([Markup.button.callback('📋 My Work Orders', 'wo_list')]);
       
       // Check if user is facility admin or supervisor
       const membership = await prisma.facilityMember.findFirst({
@@ -250,33 +243,32 @@ async function showMainMenu(ctx) {
       });
       
       if (membership) {
-        // === القسم الثاني: الإدارة ===
-        buttons.push([Markup.button.callback('🏢 لوحة التحكم', 'facility_dashboard')]);
-        buttons.push([Markup.button.callback('⚙️ إدارة الطلبات', 'manage_work_orders')]);
+        buttons.push([Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')]);
+        buttons.push([Markup.button.callback('🔧 Manage Work Orders', 'manage_work_orders')]);
         
         // Add role management for facility admins
         if (membership.role === 'facility_admin') {
-          buttons.push([Markup.button.callback('👥 إدارة الأعضاء', 'manage_members')]);
-          buttons.push([Markup.button.callback('🔐 إدارة الأدوار', 'role_management')]);
+          buttons.push([Markup.button.callback('👥 Manage Members', 'manage_members')]);
+          buttons.push([Markup.button.callback('🔐 Role Management', 'role_management')]);
         }
       }
       
-      // === القسم الثالث: التسجيل ===
-      buttons.push([Markup.button.callback('👤 تسجيل كمستخدم', 'register_user')]);
-      buttons.push([Markup.button.callback('🔧 تسجيل كفني', 'register_technician')]);
-      buttons.push([Markup.button.callback('👨‍💼 تسجيل كمشرف', 'register_supervisor')]);
+      // Add user registration options
+      buttons.push([Markup.button.callback('👤 Register as User', 'register_user')]);
+      buttons.push([Markup.button.callback('🔧 Register as Technician', 'register_technician')]);
+      buttons.push([Markup.button.callback('👨‍💼 Register as Supervisor', 'register_supervisor')]);
       
-      // === القسم الرابع: الإشعارات والتذكيرات ===
+      // Add notifications button
       const unreadCount = await prisma.notification.count({
         where: { userId: user.id, isRead: false }
       });
       
-      const notificationText = unreadCount > 0 ? `🔔 الإشعارات (${unreadCount})` : '🔔 الإشعارات';
+      const notificationText = unreadCount > 0 ? `🔔 Notifications (${unreadCount})` : '🔔 Notifications';
       buttons.push([Markup.button.callback(notificationText, 'notifications')]);
       
       // Add smart notifications button for admins
       if (membership) {
-        buttons.push([Markup.button.callback('🤖 التنبيهات الذكية', 'smart_notifications')]);
+        buttons.push([Markup.button.callback('🤖 Smart Alerts', 'smart_notifications')]);
       }
       
       // Add reminders button
@@ -288,35 +280,24 @@ async function showMainMenu(ctx) {
         }
       });
       
-      const reminderText = activeReminders > 0 ? `⏰ التذكيرات (${activeReminders})` : '⏰ التذكيرات';
+      const reminderText = activeReminders > 0 ? `⏰ Reminders (${activeReminders})` : '⏰ Reminders';
       buttons.push([Markup.button.callback(reminderText, 'reminders')]);
       
-      // === القسم الخامس: التقارير ===
+      // Add reports button for admins
       if (membership) {
-        buttons.push([Markup.button.callback('📊 التقارير المتقدمة', 'advanced_reports')]);
+        buttons.push([Markup.button.callback('📊 Advanced Reports', 'advanced_reports')]);
       }
     } else {
-      // === للمستخدمين الجدد ===
-      buttons.push([Markup.button.callback('🏢 تسجيل منشأة', 'reg_fac_start')]);
-      buttons.push([Markup.button.callback('🔗 الانضمام لمنشأة', 'join_fac_start')]);
+      buttons.push([Markup.button.callback('🏢 Register Facility', 'reg_fac_start')]);
+      buttons.push([Markup.button.callback('🔗 Join Facility', 'join_fac_start')]);
     }
     
-    // === قسم الماستر ===
     if (isMaster(ctx)) {
-      buttons.push([Markup.button.callback('🛠 لوحة الماستر', 'master_panel')]);
-      buttons.push([Markup.button.callback('👑 لوحة التحكم الرئيسية', 'master_dashboard')]);
+      buttons.push([Markup.button.callback('🛠 Master Panel', 'master_panel')]);
+      buttons.push([Markup.button.callback('👑 Master Dashboard', 'master_dashboard')]);
     }
     
-    // === إضافة زر المساعدة ===
-    buttons.push([Markup.button.callback('❓ المساعدة', 'help')]);
-    
-    // تحسين رسالة الترحيب
-    const welcomeMessage = user.status === 'active' && user.activeFacilityId 
-      ? `👋 مرحباً بك في FixFlow!\n\n🏢 **المنشأة النشطة:** ${user.activeFacilityId}\n👤 **المستخدم:** ${user.firstName || 'مستخدم'}\n\nاختر من القائمة أدناه:`
-      : `👋 مرحباً بك في FixFlow!\n\n🔧 **نظام إدارة الصيانة الشامل**\n\nابدأ بتسجيل منشأة أو الانضمام لمنشأة موجودة:`;
-    
-    await ctx.reply(welcomeMessage, {
-      parse_mode: 'Markdown',
+    await ctx.reply('👋 Welcome to FixFlow! What would you like to do?', {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
