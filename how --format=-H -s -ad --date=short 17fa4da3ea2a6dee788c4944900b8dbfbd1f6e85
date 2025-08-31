@@ -1,0 +1,1558 @@
+[33m17fa4da[m 🏗️ إنشاء Controllers: UserController + FacilityController + WorkOrderController - تطبيق البنية المعيارية
+[1mdiff --git a/api/telegram/controllers/facilityController.js b/api/telegram/controllers/facilityController.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..77423d5[m
+[1m--- /dev/null[m
+[1m+++ b/api/telegram/controllers/facilityController.js[m
+[36m@@ -0,0 +1,482 @@[m
+[32m+[m[32m/**[m
+[32m+[m[32m * Facility Controller - إدارة عمليات المنشآت[m
+[32m+[m[32m *[m[41m [m
+[32m+[m[32m * هذا الملف يحتوي على جميع العمليات المتعلقة بالمنشآت:[m
+[32m+[m[32m * - تسجيل منشآت جديدة[m
+[32m+[m[32m * - إدارة المنشآت[m
+[32m+[m[32m * - إدارة الأعضاء[m
+[32m+[m[32m * - إدارة الإعدادات[m
+[32m+[m[32m */[m
+[32m+[m
+[32m+[m[32mconst { Markup } = require('telegraf');[m
+[32m+[m[32mconst { PrismaClient } = require('@prisma/client');[m
+[32m+[m
+[32m+[m[32m// Import utilities[m
+[32m+[m[32mconst SecurityManager = require('../utils/security');[m
+[32m+[m[32mconst FlowManager = require('../utils/flowManager');[m
+[32m+[m[32mconst PlanManager = require('../utils/planManager');[m
+[32m+[m[32mconst ErrorHandler = require('../utils/errorHandler');[m
+[32m+[m
+[32m+[m[32mconst prisma = new PrismaClient();[m
+[32m+[m
+[32m+[m[32mclass FacilityController {[m
+[32m+[m[41m  [m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * بدء تسجيل منشأة جديدة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async startFacilityRegistration(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      // التحقق من عدم وجود فلوه نشط[m
+[32m+[m[32m      if (FlowManager.hasActiveFlow(user.tgId.toString())) {[m
+[32m+[m[32m        FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // إنشاء فلوه تسجيل منشأة جديد[m
+[32m+[m[32m      FlowManager.setFlow(user.tgId.toString(), 'facility_registration', 1, {[m
+[32m+[m[32m        userId: user.tgId.toString()[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        '🏢 **Facility Registration (1/4)**\n\n' +[m
+[32m+[m[32m        'Please enter the facility name:\n\n' +[m
+[32m+[m[32m        'Example: Main Office Building\n' +[m
+[32m+[m[32m        'Requirements: 2-60 characters',[m
+[32m+[m[32m        {[m
+[32m+[m[32m          parse_mode: 'Markdown',[m
+[32m+[m[32m          ...Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('❌ Cancel Registration', 'regfac_cancel')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        }[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'start_facility_registration');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * معالجة خطوة تسجيل المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async handleFacilityRegistrationStep(ctx, step, input) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[32m      const flowState = FlowManager.getFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (!flowState || flowState.flow !== 'facility_registration') {[m
+[32m+[m[32m        return ctx.reply('❌ No active facility registration found. Please start over.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const sanitizedInput = SecurityManager.sanitizeInput(input, 100);[m
+[32m+[m
+[32m+[m[32m      switch (step) {[m
+[32m+[m[32m        case 1: // اسم المنشأة[m
+[32m+[m[32m          if (!sanitizedInput || sanitizedInput.length < 2 || sanitizedInput.length > 60) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid facility name. Please enter a name between 2-60 characters.');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          // التحقق من عدم وجود منشأة بنفس الاسم[m
+[32m+[m[32m          const existingFacility = await prisma.facility.findFirst({[m
+[32m+[m[32m            where: { name: sanitizedInput }[m
+[32m+[m[32m          });[m
+[32m+[m
+[32m+[m[32m          if (existingFacility) {[m
+[32m+[m[32m            return ctx.reply('❌ A facility with this name already exists. Please choose a different name.');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateData(user.tgId.toString(), { facilityName: sanitizedInput });[m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 2);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '🏢 **Facility Registration (2/4)**\n\n' +[m
+[32m+[m[32m            'Please enter the city:\n\n' +[m
+[32m+[m[32m            'Example: New York, Dubai, London\n' +[m
+[32m+[m[32m            'Requirements: 2-40 characters',[m
+[32m+[m[32m            {[m
+[32m+[m[32m              parse_mode: 'Markdown',[m
+[32m+[m[32m              ...Markup.inlineKeyboard([[m
+[32m+[m[32m                [Markup.button.callback('❌ Cancel Registration', 'regfac_cancel')][m
+[32m+[m[32m              ])[m
+[32m+[m[32m            }[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 2: // المدينة[m
+[32m+[m[32m          if (!sanitizedInput || sanitizedInput.length < 2 || sanitizedInput.length > 40) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid city name. Please enter a city name between 2-40 characters.');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateData(user.tgId.toString(), { city: sanitizedInput });[m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 3);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '🏢 **Facility Registration (3/4)**\n\n' +[m
+[32m+[m[32m            'Please enter the phone number:\n\n' +[m
+[32m+[m[32m            'Example: +1234567890\n' +[m
+[32m+[m[32m            'Requirements: 5-25 characters',[m
+[32m+[m[32m            {[m
+[32m+[m[32m              parse_mode: 'Markdown',[m
+[32m+[m[32m              ...Markup.inlineKeyboard([[m
+[32m+[m[32m                [Markup.button.callback('❌ Cancel Registration', 'regfac_cancel')][m
+[32m+[m[32m              ])[m
+[32m+[m[32m            }[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 3: // رقم الهاتف[m
+[32m+[m[32m          if (!sanitizedInput || sanitizedInput.length < 5 || sanitizedInput.length > 25) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid phone number. Please enter a phone number between 5-25 characters.');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateData(user.tgId.toString(), { phone: sanitizedInput });[m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 4);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '🏢 **Facility Registration (4/4)**\n\n' +[m
+[32m+[m[32m            'Please select a plan:\n\n' +[m
+[32m+[m[32m            'Choose the subscription plan for your facility:',[m
+[32m+[m[32m            {[m
+[32m+[m[32m              parse_mode: 'Markdown',[m
+[32m+[m[32m              ...Markup.inlineKeyboard([[m
+[32m+[m[32m                [Markup.button.callback('🆓 Free Plan', 'regfac_plan|Free')],[m
+[32m+[m[32m                [Markup.button.callback('⭐ Pro Plan', 'regfac_plan|Pro')],[m
+[32m+[m[32m                [Markup.button.callback('🏢 Business Plan', 'regfac_plan|Business')],[m
+[32m+[m[32m                [Markup.button.callback('❌ Cancel Registration', 'regfac_cancel')][m
+[32m+[m[32m              ])[m
+[32m+[m[32m            }[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        default:[m
+[32m+[m[32m          return ctx.reply('❌ Invalid registration step.');[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }, ctx, 'handle_facility_registration_step');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * إلغاء تسجيل المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async cancelFacilityRegistration(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        '❌ Facility registration cancelled.\n\n' +[m
+[32m+[m[32m        'You can start registration again anytime.',[m
+[32m+[m[32m        Markup.inlineKeyboard([[m
+[32m+[m[32m          [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'cancel_facility_registration');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * إكمال تسجيل المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async completeFacilityRegistration(ctx, plan) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[32m      const flowState = FlowManager.getFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (!flowState || flowState.flow !== 'facility_registration') {[m
+[32m+[m[32m        return ctx.reply('❌ No active facility registration found.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // التحقق من صحة الخطة[m
+[32m+[m[32m      const validPlans = ['Free', 'Pro', 'Business'];[m
+[32m+[m[32m      if (!validPlans.includes(plan)) {[m
+[32m+[m[32m        return ctx.reply('❌ Invalid plan selected.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // إنشاء المنشأة[m
+[32m+[m[32m      const facility = await prisma.facility.create({[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          name: flowState.data.facilityName,[m
+[32m+[m[32m          city: flowState.data.city,[m
+[32m+[m[32m          phone: flowState.data.phone,[m
+[32m+[m[32m          planTier: plan,[m
+[32m+[m[32m          status: 'active'[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // إنشاء عضوية للمستخدم كـ facility_admin[m
+[32m+[m[32m      await prisma.facilityMember.create({[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          userId: user.id,[m
+[32m+[m[32m          facilityId: facility.id,[m
+[32m+[m[32m          role: 'facility_admin',[m
+[32m+[m[32m          status: 'active'[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // تحديث المنشأة النشطة للمستخدم[m
+[32m+[m[32m      await prisma.user.update({[m
+[32m+[m[32m        where: { id: user.id },[m
+[32m+[m[32m        data: { activeFacilityId: facility.id }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // مسح الفلوه[m
+[32m+[m[32m      FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m
+[32m+[m[32m      const planInfo = await PlanManager.getPlanInfo(facility.id.toString());[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        `✅ Facility registered successfully!\n\n` +[m
+[32m+[m[32m        `🏢 **Facility Details:**\n` +[m
+[32m+[m[32m        `• Name: ${facility.name}\n` +[m
+[32m+[m[32m        `• City: ${facility.city}\n` +[m
+[32m+[m[32m        `• Phone: ${facility.phone}\n` +[m
+[32m+[m[32m        `• Plan: ${plan}\n\n` +[m
+[32m+[m[32m        `👤 **Your Role:** Facility Administrator\n\n` +[m
+[32m+[m[32m        `📊 **Plan Limits:**\n` +[m
+[32m+[m[32m        `• Members: ${planInfo.limits.members}\n` +[m
+[32m+[m[32m        `• Work Orders: ${planInfo.limits.workOrders}\n` +[m
+[32m+[m[32m        `• Reports: ${planInfo.limits.reports}\n\n` +[m
+[32m+[m[32m        `Welcome to ${facility.name}!`,[m
+[32m+[m[32m        {[m
+[32m+[m[32m          parse_mode: 'Markdown',[m
+[32m+[m[32m          ...Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🏠 Go to Main Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        }[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'complete_facility_registration');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض لوحة تحكم المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showFacilityDashboard(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, facility, membership } = await SecurityManager.validateFacilityAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        null,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician', 'user'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      if (!facility) {[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          '❌ No active facility found.\n\n' +[m
+[32m+[m[32m          'Please join a facility first.',[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // إحصائيات المنشأة[m
+[32m+[m[32m      const stats = await this.getFacilityStats(facility.id);[m
+[32m+[m
+[32m+[m[32m      const dashboardMessage = `🏢 **${facility.name} Dashboard**[m
+[32m+[m
+[32m+[m[32m📊 **Quick Stats:**[m
+[32m+[m[32m• Total Work Orders: ${stats.totalWorkOrders}[m
+[32m+[m[32m• Open Work Orders: ${stats.openWorkOrders}[m
+[32m+[m[32m• Total Members: ${stats.totalMembers}[m
+[32m+[m[32m• Active Members: ${stats.activeMembers}[m
+[32m+[m
+[32m+[m[32m📈 **Recent Activity:**[m
+[32m+[m[32m• New Work Orders (Today): ${stats.todayWorkOrders}[m
+[32m+[m[32m• Completed (This Week): ${stats.weeklyCompleted}[m
+[32m+[m
+[32m+[m[32m🔧 **Your Role:** ${membership.role.charAt(0).toUpperCase() + membership.role.slice(1)}[m
+[32m+[m[32m📅 **Member Since:** ${new Date(membership.joinedAt).toLocaleDateString()}`;[m
+[32m+[m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('📋 Work Orders', 'wo_facility_list')],[m
+[32m+[m[32m        [Markup.button.callback('👥 Members', 'facility_members')],[m
+[32m+[m[32m        [Markup.button.callback('📊 Statistics', 'facility_stats')],[m
+[32m+[m[32m        [Markup.button.callback('⚙️ Settings', 'facility_settings')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(dashboardMessage, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...keyboard[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_facility_dashboard');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض أعضاء المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showFacilityMembers(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, facility, membership } = await SecurityManager.validateFacilityAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        null,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician', 'user'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      const members = await prisma.facilityMember.findMany({[m
+[32m+[m[32m        where: {[m
+[32m+[m[32m          facilityId: facility.id,[m
+[32m+[m[32m          status: 'active'[m
+[32m+[m[32m        },[m
+[32m+[m[32m        include: {[m
+[32m+[m[32m          user: true[m
+[32m+[m[32m        },[m
+[32m+[m[32m        orderBy: [[m
+[32m+[m[32m          { role: 'asc' },[m
+[32m+[m[32m          { user: { firstName: 'asc' } }[m
+[32m+[m[32m        ][m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      if (members.length === 0) {[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          '❌ No members found in this facility.',[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Dashboard', 'facility_dashboard')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const roleEmojis = {[m
+[32m+[m[32m        'facility_admin': '👑',[m
+[32m+[m[32m        'supervisor': '👨‍💼',[m
+[32m+[m[32m        'technician': '🔧',[m
+[32m+[m[32m        'user': '👤'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      let membersList = `👥 **${facility.name} Members**\n\n`;[m
+[32m+[m[41m      [m
+[32m+[m[32m      members.forEach((member, index) => {[m
+[32m+[m[32m        const roleEmoji = roleEmojis[member.role] || '👤';[m
+[32m+[m[32m        const name = `${member.user.firstName || 'N/A'} ${member.user.lastName || ''}`.trim();[m
+[32m+[m[32m        const role = member.role.charAt(0).toUpperCase() + member.role.slice(1);[m
+[32m+[m[41m        [m
+[32m+[m[32m        membersList += `${index + 1}. ${roleEmoji} **${name}**\n`;[m
+[32m+[m[32m        membersList += `   Role: ${role}\n`;[m
+[32m+[m[32m        membersList += `   Joined: ${new Date(member.joinedAt).toLocaleDateString()}\n\n`;[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('👑 Manage Roles', 'role_management')],[m
+[32m+[m[32m        [Markup.button.callback('➕ Invite Member', 'invite_member')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to Dashboard', 'facility_dashboard')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(membersList, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...keyboard[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_facility_members');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض إحصائيات المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showFacilityStats(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, facility, membership } = await SecurityManager.validateFacilityAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        null,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician', 'user'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      const stats = await this.getFacilityStats(facility.id);[m
+[32m+[m
+[32m+[m[32m      const statsMessage = `📊 **${facility.name} Statistics**[m
+[32m+[m
+[32m+[m[32m📋 **Work Orders:**[m
+[32m+[m[32m• Total: ${stats.totalWorkOrders}[m
+[32m+[m[32m• Open: ${stats.openWorkOrders}[m
+[32m+[m[32m• In Progress: ${stats.inProgressWorkOrders}[m
+[32m+[m[32m• Completed: ${stats.completedWorkOrders}[m
+[32m+[m[32m• Closed: ${stats.closedWorkOrders}[m
+[32m+[m
+[32m+[m[32m👥 **Members:**[m
+[32m+[m[32m• Total: ${stats.totalMembers}[m
+[32m+[m[32m• Active: ${stats.activeMembers}[m
+[32m+[m[32m• Facility Admins: ${stats.facilityAdmins}[m
+[32m+[m[32m• Supervisors: ${stats.supervisors}[m
+[32m+[m[32m• Technicians: ${stats.technicians}[m
+[32m+[m[32m• Users: ${stats.users}[m
+[32m+[m
+[32m+[m[32m📈 **Activity:**[m
+[32m+[m[32m• Today: ${stats.todayWorkOrders} new work orders[m
+[32m+[m[32m• This Week: ${stats.weeklyWorkOrders} new work orders[m
+[32m+[m[32m• This Month: ${stats.monthlyWorkOrders} new work orders[m
+[32m+[m
+[32m+[m[32m⏱️ **Performance:**[m
+[32m+[m[32m• Average Resolution Time: ${stats.avgResolutionTime} days[m
+[32m+[m[32m• High Priority: ${stats.highPriorityWorkOrders}[m
+[32m+[m[32m• On-Time Completion: ${stats.onTimeCompletion}%`;[m
+[32m+[m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('📊 Detailed Reports', 'reports_menu')],[m
+[32m+[m[32m        [Markup.button.callback('📈 Performance Graph', 'performance_graph')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to Dashboard', 'facility_dashboard')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(statsMessage, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...keyboard[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_facility_stats');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * الحصول على إحصائيات المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async getFacilityStats(facilityId) {[m
+[32m+[m[32m    const now = new Date();[m
+[32m+[m[32m    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());[m
+[32m+[m[32m    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);[m
+[32m+[m[32m    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);[m
+[32m+[m
+[32m+[m[32m    const [[m
+[32m+[m[32m      totalWorkOrders,[m
+[32m+[m[32m      openWorkOrders,[m
+[32m+[m[32m      inProgressWorkOrders,[m
+[32m+[m[32m      completedWorkOrders,[m
+[32m+[m[32m      closedWorkOrders,[m
+[32m+[m[32m      todayWorkOrders,[m
+[32m+[m[32m      weeklyWorkOrders,[m
+[32m+[m[32m      monthlyWorkOrders,[m
+[32m+[m[32m      totalMembers,[m
+[32m+[m[32m      activeMembers,[m
+[32m+[m[32m      facilityAdmins,[m
+[32m+[m[32m      supervisors,[m
+[32m+[m[32m      technicians,[m
+[32m+[m[32m      users[m
+[32m+[m[32m    ] = await Promise.all([[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'open' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'in_progress' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'done' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'closed' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: today } } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: weekAgo } } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: monthAgo } } }),[m
+[32m+[m[32m      prisma.facilityMember.count({ where: { facilityId } }),[m
+[32m+[m[32m      prisma.facilityMember.count({ where: { facilityId, status: 'active' } }),[m
+[32m+[m[32m      prisma.facilityMember.count({ where: { facilityId, role: 'facility_admin', status: 'active' } }),[m
+[32m+[m[32m      prisma.facilityMember.count({ where: { facilityId, role: 'supervisor', status: 'active' } }),[m
+[32m+[m[32m      prisma.facilityMember.count({ where: { facilityId, role: 'technician', status: 'active' } }),[m
+[32m+[m[32m      prisma.facilityMember.count({ where: { facilityId, role: 'user', status: 'active' } })[m
+[32m+[m[32m    ]);[m
+[32m+[m
+[32m+[m[32m    return {[m
+[32m+[m[32m      totalWorkOrders,[m
+[32m+[m[32m      openWorkOrders,[m
+[32m+[m[32m      inProgressWorkOrders,[m
+[32m+[m[32m      completedWorkOrders,[m
+[32m+[m[32m      closedWorkOrders,[m
+[32m+[m[32m      todayWorkOrders,[m
+[32m+[m[32m      weeklyWorkOrders,[m
+[32m+[m[32m      monthlyWorkOrders,[m
+[32m+[m[32m      totalMembers,[m
+[32m+[m[32m      activeMembers,[m
+[32m+[m[32m      facilityAdmins,[m
+[32m+[m[32m      supervisors,[m
+[32m+[m[32m      technicians,[m
+[32m+[m[32m      users,[m
+[32m+[m[32m      avgResolutionTime: '2.5', // Placeholder[m
+[32m+[m[32m      highPriorityWorkOrders: 0, // Placeholder[m
+[32m+[m[32m      onTimeCompletion: 85 // Placeholder[m
+[32m+[m[32m    };[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mmodule.exports = FacilityController;[m
+[1mdiff --git a/api/telegram/controllers/index.js b/api/telegram/controllers/index.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..0b7855f[m
+[1m--- /dev/null[m
+[1m+++ b/api/telegram/controllers/index.js[m
+[36m@@ -0,0 +1,16 @@[m
+[32m+[m[32m/**[m
+[32m+[m[32m * Controllers Index - نقطة دخول للـ Controllers[m
+[32m+[m[32m *[m[41m [m
+[32m+[m[32m * هذا الملف يجمع جميع الـ Controllers في مكان واحد[m
+[32m+[m[32m * لتسهيل الاستيراد والاستخدام[m
+[32m+[m[32m */[m
+[32m+[m
+[32m+[m[32mconst UserController = require('./userController');[m
+[32m+[m[32mconst FacilityController = require('./facilityController');[m
+[32m+[m[32mconst WorkOrderController = require('./workOrderController');[m
+[32m+[m
+[32m+[m[32mmodule.exports = {[m
+[32m+[m[32m  UserController,[m
+[32m+[m[32m  FacilityController,[m
+[32m+[m[32m  WorkOrderController[m
+[32m+[m[32m};[m
+[1mdiff --git a/api/telegram/controllers/userController.js b/api/telegram/controllers/userController.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..8fa2359[m
+[1m--- /dev/null[m
+[1m+++ b/api/telegram/controllers/userController.js[m
+[36m@@ -0,0 +1,461 @@[m
+[32m+[m[32m/**[m
+[32m+[m[32m * User Controller - إدارة عمليات المستخدمين[m
+[32m+[m[32m *[m[41m [m
+[32m+[m[32m * هذا الملف يحتوي على جميع العمليات المتعلقة بالمستخدمين:[m
+[32m+[m[32m * - تسجيل المستخدمين الجدد[m
+[32m+[m[32m * - إدارة الملف الشخصي[m
+[32m+[m[32m * - إدارة العضوية في المنشآت[m
+[32m+[m[32m * - إدارة الأدوار والصلاحيات[m
+[32m+[m[32m */[m
+[32m+[m
+[32m+[m[32mconst { Markup } = require('telegraf');[m
+[32m+[m[32mconst { PrismaClient } = require('@prisma/client');[m
+[32m+[m
+[32m+[m[32m// Import utilities[m
+[32m+[m[32mconst SecurityManager = require('../utils/security');[m
+[32m+[m[32mconst FlowManager = require('../utils/flowManager');[m
+[32m+[m[32mconst PlanManager = require('../utils/planManager');[m
+[32m+[m[32mconst ErrorHandler = require('../utils/errorHandler');[m
+[32m+[m
+[32m+[m[32mconst prisma = new PrismaClient();[m
+[32m+[m
+[32m+[m[32mclass UserController {[m
+[32m+[m[41m  [m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض القائمة الرئيسية للمستخدم[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showMainMenu(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('➕ Create Work Order', 'wo_new')],[m
+[32m+[m[32m        [Markup.button.callback('📋 My Work Orders', 'wo_list')],[m
+[32m+[m[32m        [Markup.button.callback('🏢 Facility Dashboard', 'facility_dashboard')],[m
+[32m+[m[32m        [Markup.button.callback('👥 Manage Members', 'manage_members')],[m
+[32m+[m[32m        [Markup.button.callback('📊 Reports', 'reports_menu')],[m
+[32m+[m[32m        [Markup.button.callback('🔔 Notifications', 'notifications')],[m
+[32m+[m[32m        [Markup.button.callback('⏰ Reminders', 'reminders')],[m
+[32m+[m[32m        [Markup.button.callback('❓ Help', 'help')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      const welcomeMessage = `🎉 Welcome back, ${user.firstName || 'User'}![m
+[32m+[m
+[32m+[m[32m🏢 Active Facility: ${user.activeFacilityId ? 'Connected' : 'Not connected'}[m
+[32m+[m[32m👤 Role: ${user.jobTitle || 'User'}[m
+[32m+[m[32m📅 Member since: ${user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}[m
+[32m+[m
+[32m+[m[32mWhat would you like to do today?`;[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(welcomeMessage, keyboard);[m
+[32m+[m[32m    }, ctx, 'show_main_menu');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * بدء تسجيل مستخدم جديد[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async startUserRegistration(ctx, role = 'user') {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      // التحقق من عدم وجود فلوه نشط[m
+[32m+[m[32m      if (FlowManager.hasActiveFlow(user.tgId.toString())) {[m
+[32m+[m[32m        FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // إنشاء فلوه تسجيل جديد[m
+[32m+[m[32m      FlowManager.setFlow(user.tgId.toString(), 'user_registration', 1, {[m
+[32m+[m[32m        role: role,[m
+[32m+[m[32m        userId: user.tgId.toString()[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      const roleNames = {[m
+[32m+[m[32m        'user': '👤 User',[m
+[32m+[m[32m        'technician': '🔧 Technician',[m[41m [m
+[32m+[m[32m        'supervisor': '👨‍💼 Supervisor'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      const roleName = roleNames[role] || '👤 User';[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        `📝 ${roleName} Registration (1/5)\n\n` +[m
+[32m+[m[32m        `Please enter your full name (first and last name):\n\n` +[m
+[32m+[m[32m        `Example: John Doe`,[m
+[32m+[m[32m        Markup.inlineKeyboard([[m
+[32m+[m[32m          [Markup.button.callback('❌ Cancel Registration', 'user_reg_cancel')][m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'start_user_registration');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * معالجة خطوة تسجيل المستخدم[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async handleUserRegistrationStep(ctx, step, input) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[32m      const flowState = FlowManager.getFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (!flowState || flowState.flow !== 'user_registration') {[m
+[32m+[m[32m        return ctx.reply('❌ No active registration found. Please start over.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const sanitizedInput = SecurityManager.sanitizeInput(input, 100);[m
+[32m+[m
+[32m+[m[32m      switch (step) {[m
+[32m+[m[32m        case 1: // الاسم الكامل[m
+[32m+[m[32m          if (!SecurityManager.validateName(sanitizedInput)) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid name format. Please enter a valid name (2-50 characters).');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateData(user.tgId.toString(), { fullName: sanitizedInput });[m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 2);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '📝 User Registration (2/5)\n\n' +[m
+[32m+[m[32m            'Please enter your email address (optional):\n\n' +[m
+[32m+[m[32m            'Example: john.doe@company.com\n' +[m
+[32m+[m[32m            'Or type "skip" to skip this step.',[m
+[32m+[m[32m            Markup.inlineKeyboard([[m
+[32m+[m[32m              [Markup.button.callback('❌ Cancel Registration', 'user_reg_cancel')][m
+[32m+[m[32m            ])[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 2: // البريد الإلكتروني[m
+[32m+[m[32m          if (sanitizedInput.toLowerCase() === 'skip') {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { email: null });[m
+[32m+[m[32m          } else if (sanitizedInput && !SecurityManager.validateEmail(sanitizedInput)) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid email format. Please enter a valid email or type "skip".');[m
+[32m+[m[32m          } else {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { email: sanitizedInput || null });[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 3);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '📝 User Registration (3/5)\n\n' +[m
+[32m+[m[32m            'Please enter your phone number (optional):\n\n' +[m
+[32m+[m[32m            'Example: +1234567890\n' +[m
+[32m+[m[32m            'Or type "skip" to skip this step.',[m
+[32m+[m[32m            Markup.inlineKeyboard([[m
+[32m+[m[32m              [Markup.button.callback('❌ Cancel Registration', 'user_reg_cancel')][m
+[32m+[m[32m            ])[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 3: // رقم الهاتف[m
+[32m+[m[32m          if (sanitizedInput.toLowerCase() === 'skip') {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { phone: null });[m
+[32m+[m[32m          } else if (sanitizedInput && !SecurityManager.validatePhone(sanitizedInput)) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid phone format. Please enter a valid phone or type "skip".');[m
+[32m+[m[32m          } else {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { phone: sanitizedInput || null });[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 4);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '📝 User Registration (4/5)\n\n' +[m
+[32m+[m[32m            'Please enter your job title (optional):\n\n' +[m
+[32m+[m[32m            'Example: Senior Technician, Facility Manager\n' +[m
+[32m+[m[32m            'Or type "skip" to skip this step.',[m
+[32m+[m[32m            Markup.inlineKeyboard([[m
+[32m+[m[32m              [Markup.button.callback('❌ Cancel Registration', 'user_reg_cancel')][m
+[32m+[m[32m            ])[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 4: // المسمى الوظيفي[m
+[32m+[m[32m          if (sanitizedInput.toLowerCase() === 'skip') {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { jobTitle: null });[m
+[32m+[m[32m          } else {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { jobTitle: sanitizedInput });[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 5);[m
+[32m+[m[41m          [m
+[32m+[m[32m          // عرض المنشآت المتاحة[m
+[32m+[m[32m          const facilities = await prisma.facility.findMany({[m
+[32m+[m[32m            where: { status: 'active' },[m
+[32m+[m[32m            orderBy: { name: 'asc' }[m
+[32m+[m[32m          });[m
+[32m+[m
+[32m+[m[32m          if (facilities.length === 0) {[m
+[32m+[m[32m            return ctx.reply([m
+[32m+[m[32m              '❌ No active facilities found.\n\n' +[m
+[32m+[m[32m              'Please contact the administrator to create a facility first.',[m
+[32m+[m[32m              Markup.inlineKeyboard([[m
+[32m+[m[32m                [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m              ])[m
+[32m+[m[32m            );[m
+[32m+[m[32m          }[m
+[32m+[m
+[32m+[m[32m          const facilityButtons = facilities.map(facility => [[m
+[32m+[m[32m            Markup.button.callback([m
+[32m+[m[32m              `${facility.name} (${facility.city || 'N/A'})`,[m
+[32m+[m[32m              `join_fac|${facility.id}`[m
+[32m+[m[32m            )[m
+[32m+[m[32m          ]);[m
+[32m+[m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '📝 User Registration (5/5)\n\n' +[m
+[32m+[m[32m            'Please select a facility to join:\n\n' +[m
+[32m+[m[32m            'Choose the facility where you work:',[m
+[32m+[m[32m            Markup.inlineKeyboard([[m
+[32m+[m[32m              ...facilityButtons,[m
+[32m+[m[32m              [Markup.button.callback('❌ Cancel Registration', 'user_reg_cancel')][m
+[32m+[m[32m            ])[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        default:[m
+[32m+[m[32m          return ctx.reply('❌ Invalid registration step.');[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }, ctx, 'handle_user_registration_step');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * إلغاء تسجيل المستخدم[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async cancelUserRegistration(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        '❌ User registration cancelled.\n\n' +[m
+[32m+[m[32m        'You can start registration again anytime.',[m
+[32m+[m[32m        Markup.inlineKeyboard([[m
+[32m+[m[32m          [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'cancel_user_registration');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * إكمال تسجيل المستخدم[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async completeUserRegistration(ctx, facilityId) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[32m      const flowState = FlowManager.getFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (!flowState || flowState.flow !== 'user_registration') {[m
+[32m+[m[32m        return ctx.reply('❌ No active registration found.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // التحقق من وجود المنشأة[m
+[32m+[m[32m      const facility = await prisma.facility.findUnique({[m
+[32m+[m[32m        where: { id: BigInt(facilityId) }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      if (!facility) {[m
+[32m+[m[32m        return ctx.reply('❌ Facility not found.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // التحقق من حدود الخطة[m
+[32m+[m[32m      await PlanManager.checkPlanLimit(facilityId, 'members', 1);[m
+[32m+[m
+[32m+[m[32m      // تحديث بيانات المستخدم[m
+[32m+[m[32m      const [firstName, ...lastNameParts] = (flowState.data.fullName || '').split(' ');[m
+[32m+[m[32m      const lastName = lastNameParts.join(' ');[m
+[32m+[m
+[32m+[m[32m      await prisma.user.update({[m
+[32m+[m[32m        where: { id: user.id },[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          firstName: firstName || null,[m
+[32m+[m[32m          lastName: lastName || null,[m
+[32m+[m[32m          email: flowState.data.email,[m
+[32m+[m[32m          phone: flowState.data.phone,[m
+[32m+[m[32m          jobTitle: flowState.data.jobTitle,[m
+[32m+[m[32m          status: 'active',[m
+[32m+[m[32m          activeFacilityId: BigInt(facilityId)[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // إنشاء عضوية في المنشأة[m
+[32m+[m[32m      const role = flowState.data.role === 'supervisor' ? 'supervisor' :[m[41m [m
+[32m+[m[32m                   flowState.data.role === 'technician' ? 'technician' : 'user';[m
+[32m+[m
+[32m+[m[32m      await prisma.facilityMember.create({[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          userId: user.id,[m
+[32m+[m[32m          facilityId: BigInt(facilityId),[m
+[32m+[m[32m          role: role,[m
+[32m+[m[32m          status: 'active'[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // مسح الفلوه[m
+[32m+[m[32m      FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        `✅ Registration completed successfully!\n\n` +[m
+[32m+[m[32m        `👤 Name: ${flowState.data.fullName}\n` +[m
+[32m+[m[32m        `🏢 Facility: ${facility.name}\n` +[m
+[32m+[m[32m        `🔧 Role: ${role.charAt(0).toUpperCase() + role.slice(1)}\n` +[m
+[32m+[m[32m        `📧 Email: ${flowState.data.email || 'Not provided'}\n` +[m
+[32m+[m[32m        `📱 Phone: ${flowState.data.phone || 'Not provided'}\n\n` +[m
+[32m+[m[32m        `Welcome to ${facility.name}!`,[m
+[32m+[m[32m        Markup.inlineKeyboard([[m
+[32m+[m[32m          [Markup.button.callback('🏠 Go to Main Menu', 'back_to_menu')][m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'complete_user_registration');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض معلومات المستخدم[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showUserProfile(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      const activeFacility = user.activeFacilityId ? await prisma.facility.findUnique({[m
+[32m+[m[32m        where: { id: user.activeFacilityId }[m
+[32m+[m[32m      }) : null;[m
+[32m+[m
+[32m+[m[32m      const membership = user.activeFacilityId ? await prisma.facilityMember.findFirst({[m
+[32m+[m[32m        where: {[m
+[32m+[m[32m          userId: user.id,[m
+[32m+[m[32m          facilityId: user.activeFacilityId[m
+[32m+[m[32m        }[m
+[32m+[m[32m      }) : null;[m
+[32m+[m
+[32m+[m[32m      const profileMessage = `👤 **User Profile**[m
+[32m+[m
+[32m+[m[32m📝 **Personal Information:**[m
+[32m+[m[32m• Name: ${user.firstName || 'N/A'} ${user.lastName || ''}[m
+[32m+[m[32m• Email: ${user.email || 'Not provided'}[m
+[32m+[m[32m• Phone: ${user.phone || 'Not provided'}[m
+[32m+[m[32m• Job Title: ${user.jobTitle || 'Not specified'}[m
+[32m+[m
+[32m+[m[32m🏢 **Facility Information:**[m
+[32m+[m[32m• Active Facility: ${activeFacility ? activeFacility.name : 'Not connected'}[m
+[32m+[m[32m• Role: ${membership ? membership.role.charAt(0).toUpperCase() + membership.role.slice(1) : 'N/A'}[m
+[32m+[m[32m• Status: ${user.status}[m
+[32m+[m
+[32m+[m[32m📅 **Account Information:**[m
+[32m+[m[32m• Member since: ${user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}[m
+[32m+[m[32m• Last updated: ${user.updatedAt ? new Date(user.updatedAt).toLocaleDateString() : 'N/A'}`;[m
+[32m+[m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('✏️ Edit Profile', 'edit_profile')],[m
+[32m+[m[32m        [Markup.button.callback('🏢 Switch Facility', 'switch')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(profileMessage, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...keyboard[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_user_profile');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * تبديل المنشأة النشطة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async switchFacility(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      // البحث عن المنشآت التي ينتمي إليها المستخدم[m
+[32m+[m[32m      const memberships = await prisma.facilityMember.findMany({[m
+[32m+[m[32m        where: {[m
+[32m+[m[32m          userId: user.id,[m
+[32m+[m[32m          status: 'active'[m
+[32m+[m[32m        },[m
+[32m+[m[32m        include: {[m
+[32m+[m[32m          facility: true[m
+[32m+[m[32m        },[m
+[32m+[m[32m        orderBy: {[m
+[32m+[m[32m          facility: { name: 'asc' }[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      if (memberships.length === 0) {[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          '❌ You are not a member of any facility.\n\n' +[m
+[32m+[m[32m          'Please join a facility first.',[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      if (memberships.length === 1) {[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          'ℹ️ You are only a member of one facility.\n\n' +[m
+[32m+[m[32m          `Current facility: ${memberships[0].facility.name}`,[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const facilityButtons = memberships.map(membership => [[m
+[32m+[m[32m        Markup.button.callback([m
+[32m+[m[32m          `${membership.facility.name} (${membership.role})`,[m
+[32m+[m[32m          `switch_to_${membership.facility.id}`[m
+[32m+[m[32m        )[m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        '🏢 **Switch Active Facility**\n\n' +[m
+[32m+[m[32m        'Select a facility to switch to:\n\n' +[m
+[32m+[m[32m        'Current active facility will be changed.',[m
+[32m+[m[32m        {[m
+[32m+[m[32m          parse_mode: 'Markdown',[m
+[32m+[m[32m          ...Markup.inlineKeyboard([[m
+[32m+[m[32m            ...facilityButtons,[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        }[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'switch_facility');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * تنفيذ تبديل المنشأة[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async executeFacilitySwitch(ctx, facilityId) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      // التحقق من العضوية[m
+[32m+[m[32m      const membership = await prisma.facilityMember.findFirst({[m
+[32m+[m[32m        where: {[m
+[32m+[m[32m          userId: user.id,[m
+[32m+[m[32m          facilityId: BigInt(facilityId),[m
+[32m+[m[32m          status: 'active'[m
+[32m+[m[32m        },[m
+[32m+[m[32m        include: {[m
+[32m+[m[32m          facility: true[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      if (!membership) {[m
+[32m+[m[32m        return ctx.reply('❌ You are not a member of this facility.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // تحديث المنشأة النشطة[m
+[32m+[m[32m      await prisma.user.update({[m
+[32m+[m[32m        where: { id: user.id },[m
+[32m+[m[32m        data: { activeFacilityId: BigInt(facilityId) }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        `✅ Successfully switched to ${membership.facility.name}!\n\n` +[m
+[32m+[m[32m        `🏢 Active Facility: ${membership.facility.name}\n` +[m
+[32m+[m[32m        `🔧 Your Role: ${membership.role.charAt(0).toUpperCase() + membership.role.slice(1)}`,[m
+[32m+[m[32m        Markup.inlineKeyboard([[m
+[32m+[m[32m          [Markup.button.callback('🏠 Go to Main Menu', 'back_to_menu')][m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'execute_facility_switch');[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mmodule.exports = UserController;[m
+[1mdiff --git a/api/telegram/controllers/workOrderController.js b/api/telegram/controllers/workOrderController.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..6dba0f0[m
+[1m--- /dev/null[m
+[1m+++ b/api/telegram/controllers/workOrderController.js[m
+[36m@@ -0,0 +1,574 @@[m
+[32m+[m[32m/**[m
+[32m+[m[32m * Work Order Controller - إدارة عمليات البلاغات[m
+[32m+[m[32m *[m[41m [m
+[32m+[m[32m * هذا الملف يحتوي على جميع العمليات المتعلقة بالبلاغات:[m
+[32m+[m[32m * - إنشاء بلاغات جديدة[m
+[32m+[m[32m * - إدارة البلاغات[m
+[32m+[m[32m * - تتبع الحالة[m
+[32m+[m[32m * - إدارة الأولويات[m
+[32m+[m[32m */[m
+[32m+[m
+[32m+[m[32mconst { Markup } = require('telegraf');[m
+[32m+[m[32mconst { PrismaClient } = require('@prisma/client');[m
+[32m+[m
+[32m+[m[32m// Import utilities[m
+[32m+[m[32mconst SecurityManager = require('../utils/security');[m
+[32m+[m[32mconst FlowManager = require('../utils/flowManager');[m
+[32m+[m[32mconst PlanManager = require('../utils/planManager');[m
+[32m+[m[32mconst ErrorHandler = require('../utils/errorHandler');[m
+[32m+[m
+[32m+[m[32mconst prisma = new PrismaClient();[m
+[32m+[m
+[32m+[m[32mclass WorkOrderController {[m
+[32m+[m[41m  [m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * بدء إنشاء بلاغ جديد[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async startWorkOrderCreation(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (!user.activeFacilityId) {[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          '❌ You need to be connected to a facility to create work orders.\n\n' +[m
+[32m+[m[32m          'Please join a facility first.',[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // التحقق من حدود الخطة[m
+[32m+[m[32m      await PlanManager.checkPlanLimit(user.activeFacilityId.toString(), 'workOrders', 1);[m
+[32m+[m
+[32m+[m[32m      // التحقق من عدم وجود فلوه نشط[m
+[32m+[m[32m      if (FlowManager.hasActiveFlow(user.tgId.toString())) {[m
+[32m+[m[32m        FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // إنشاء فلوه إنشاء بلاغ جديد[m
+[32m+[m[32m      FlowManager.setFlow(user.tgId.toString(), 'wo_new', 1, {[m
+[32m+[m[32m        facilityId: user.activeFacilityId.toString(),[m
+[32m+[m[32m        userId: user.tgId.toString()[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        '🔧 **Work Order Creation (1/6)**\n\n' +[m
+[32m+[m[32m        'Choose the type of work:\n\n' +[m
+[32m+[m[32m        'Select the category that best describes the work needed:',[m
+[32m+[m[32m        {[m
+[32m+[m[32m          parse_mode: 'Markdown',[m
+[32m+[m[32m          ...Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔧 Maintenance', 'wo_type|maintenance')],[m
+[32m+[m[32m            [Markup.button.callback('🔨 Repair', 'wo_type|repair')],[m
+[32m+[m[32m            [Markup.button.callback('⚙️ Installation', 'wo_type|installation')],[m
+[32m+[m[32m            [Markup.button.callback('🧹 Cleaning', 'wo_type|cleaning')],[m
+[32m+[m[32m            [Markup.button.callback('🔍 Inspection', 'wo_type|inspection')],[m
+[32m+[m[32m            [Markup.button.callback('📝 Other', 'wo_type|other')],[m
+[32m+[m[32m            [Markup.button.callback('❌ Cancel', 'wo_cancel')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        }[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'start_work_order_creation');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * معالجة خطوة إنشاء البلاغ[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async handleWorkOrderStep(ctx, step, input) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[32m      const flowState = FlowManager.getFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (!flowState || flowState.flow !== 'wo_new') {[m
+[32m+[m[32m        return ctx.reply('❌ No active work order creation found. Please start over.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const sanitizedInput = SecurityManager.sanitizeInput(input, 1000);[m
+[32m+[m
+[32m+[m[32m      switch (step) {[m
+[32m+[m[32m        case 4: // الموقع[m
+[32m+[m[32m          if (!sanitizedInput || sanitizedInput.length < 2 || sanitizedInput.length > 100) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid location. Please enter a location between 2-100 characters.');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateData(user.tgId.toString(), { location: sanitizedInput });[m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 5);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '🔧 **Work Order Creation (5/6)**\n\n' +[m
+[32m+[m[32m            'Please enter the equipment (optional):\n\n' +[m
+[32m+[m[32m            'Example: HVAC Unit #5, Elevator 2, Generator A\n' +[m
+[32m+[m[32m            'Or type "skip" to skip this step.',[m
+[32m+[m[32m            Markup.inlineKeyboard([[m
+[32m+[m[32m              [Markup.button.callback('❌ Cancel', 'wo_cancel')][m
+[32m+[m[32m            ])[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 5: // المعدات[m
+[32m+[m[32m          if (sanitizedInput.toLowerCase() === 'skip') {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { equipment: null });[m
+[32m+[m[32m          } else {[m
+[32m+[m[32m            FlowManager.updateData(user.tgId.toString(), { equipment: sanitizedInput });[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateStep(user.tgId.toString(), 6);[m
+[32m+[m[41m          [m
+[32m+[m[32m          await ctx.reply([m
+[32m+[m[32m            '🔧 **Work Order Creation (6/6)**\n\n' +[m
+[32m+[m[32m            'Please enter a detailed description:\n\n' +[m
+[32m+[m[32m            'Describe the issue, work needed, or any specific requirements:\n' +[m
+[32m+[m[32m            'Requirements: 10-500 characters',[m
+[32m+[m[32m            Markup.inlineKeyboard([[m
+[32m+[m[32m              [Markup.button.callback('❌ Cancel', 'wo_cancel')][m
+[32m+[m[32m            ])[m
+[32m+[m[32m          );[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        case 6: // الوصف[m
+[32m+[m[32m          if (!sanitizedInput || sanitizedInput.length < 10 || sanitizedInput.length > 500) {[m
+[32m+[m[32m            return ctx.reply('❌ Invalid description. Please enter a description between 10-500 characters.');[m
+[32m+[m[32m          }[m
+[32m+[m[41m          [m
+[32m+[m[32m          FlowManager.updateData(user.tgId.toString(), { description: sanitizedInput });[m
+[32m+[m[41m          [m
+[32m+[m[32m          // إنشاء البلاغ[m
+[32m+[m[32m          await this.createWorkOrder(ctx, user, flowState.data);[m
+[32m+[m[32m          break;[m
+[32m+[m
+[32m+[m[32m        default:[m
+[32m+[m[32m          return ctx.reply('❌ Invalid work order step.');[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }, ctx, 'handle_work_order_step');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * إنشاء البلاغ في قاعدة البيانات[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async createWorkOrder(ctx, user, workOrderData) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      // التحقق من حدود الخطة مرة أخرى[m
+[32m+[m[32m      await PlanManager.checkPlanLimit(user.activeFacilityId.toString(), 'workOrders', 1);[m
+[32m+[m
+[32m+[m[32m      // إنشاء البلاغ[m
+[32m+[m[32m      const workOrder = await prisma.workOrder.create({[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          facilityId: user.activeFacilityId,[m
+[32m+[m[32m          createdByUserId: user.id,[m
+[32m+[m[32m          status: 'open',[m
+[32m+[m[32m          typeOfWork: workOrderData.typeOfWork,[m
+[32m+[m[32m          typeOfService: workOrderData.typeOfService,[m
+[32m+[m[32m          priority: workOrderData.priority,[m
+[32m+[m[32m          location: workOrderData.location,[m
+[32m+[m[32m          equipment: workOrderData.equipment,[m
+[32m+[m[32m          description: workOrderData.description[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // إنشاء سجل الحالة[m
+[32m+[m[32m      await prisma.statusHistory.create({[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          workOrderId: workOrder.id,[m
+[32m+[m[32m          oldStatus: '',[m
+[32m+[m[32m          newStatus: 'open',[m
+[32m+[m[32m          createdAt: new Date()[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // مسح الفلوه[m
+[32m+[m[32m      FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m
+[32m+[m[32m      const priorityEmojis = {[m
+[32m+[m[32m        'high': '🔴',[m
+[32m+[m[32m        'medium': '🟡',[m
+[32m+[m[32m        'low': '🟢'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      const priorityEmoji = priorityEmojis[workOrderData.priority] || '⚪';[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        `✅ **Work Order Created Successfully!**\n\n` +[m
+[32m+[m[32m        `📋 **Work Order #${workOrder.id}**\n\n` +[m
+[32m+[m[32m        `🔧 **Type:** ${workOrderData.typeOfWork}\n` +[m
+[32m+[m[32m        `🛠️ **Service:** ${workOrderData.typeOfService}\n` +[m
+[32m+[m[32m        `${priorityEmoji} **Priority:** ${workOrderData.priority}\n` +[m
+[32m+[m[32m        `📍 **Location:** ${workOrderData.location}\n` +[m
+[32m+[m[32m        `${workOrderData.equipment ? `⚙️ **Equipment:** ${workOrderData.equipment}\n` : ''}` +[m
+[32m+[m[32m        `📝 **Description:** ${workOrderData.description}\n\n` +[m
+[32m+[m[32m        `📅 **Created:** ${new Date().toLocaleString()}\n` +[m
+[32m+[m[32m        `👤 **Created by:** ${user.firstName || 'User'}\n\n` +[m
+[32m+[m[32m        `Your work order has been submitted and is now being reviewed.`,[m
+[32m+[m[32m        {[m
+[32m+[m[32m          parse_mode: 'Markdown',[m
+[32m+[m[32m          ...Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('📋 View Work Order', `wo_view|${workOrder.id}`)],[m
+[32m+[m[32m            [Markup.button.callback('➕ Create Another', 'wo_new')],[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        }[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'create_work_order');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * إلغاء إنشاء البلاغ[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async cancelWorkOrderCreation(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user } = await SecurityManager.authenticateUser(ctx);[m
+[32m+[m[41m      [m
+[32m+[m[32m      FlowManager.clearFlow(user.tgId.toString());[m
+[32m+[m[41m      [m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        '❌ Work order creation cancelled.\n\n' +[m
+[32m+[m[32m        'You can create a new work order anytime.',[m
+[32m+[m[32m        Markup.inlineKeyboard([[m
+[32m+[m[32m          [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'cancel_work_order_creation');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض قائمة البلاغات[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showWorkOrders(ctx, filter = 'all') {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, facility } = await SecurityManager.validateFacilityAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        null,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician', 'user'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      if (!facility) {[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          '❌ No active facility found.\n\n' +[m
+[32m+[m[32m          'Please join a facility first.',[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      // بناء شروط البحث[m
+[32m+[m[32m      const where = { facilityId: facility.id };[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (filter === 'my') {[m
+[32m+[m[32m        where.createdByUserId = user.id;[m
+[32m+[m[32m      } else if (filter !== 'all') {[m
+[32m+[m[32m        where.status = filter;[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const workOrders = await prisma.workOrder.findMany({[m
+[32m+[m[32m        where,[m
+[32m+[m[32m        include: {[m
+[32m+[m[32m          byUser: true[m
+[32m+[m[32m        },[m
+[32m+[m[32m        orderBy: [[m
+[32m+[m[32m          { priority: 'desc' },[m
+[32m+[m[32m          { createdAt: 'desc' }[m
+[32m+[m[32m        ],[m
+[32m+[m[32m        take: 10[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      if (workOrders.length === 0) {[m
+[32m+[m[32m        const filterText = filter === 'my' ? 'your' : filter === 'all' ? 'any' : filter;[m
+[32m+[m[32m        return ctx.reply([m
+[32m+[m[32m          `📋 No ${filterText} work orders found.\n\n` +[m
+[32m+[m[32m          'Create a new work order to get started.',[m
+[32m+[m[32m          Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('➕ Create Work Order', 'wo_new')],[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const priorityEmojis = {[m
+[32m+[m[32m        'high': '🔴',[m
+[32m+[m[32m        'medium': '🟡',[m
+[32m+[m[32m        'low': '🟢'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      const statusEmojis = {[m
+[32m+[m[32m        'open': '📋',[m
+[32m+[m[32m        'in_progress': '🔄',[m
+[32m+[m[32m        'done': '✅',[m
+[32m+[m[32m        'closed': '🔒'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      let workOrdersList = `📋 **Work Orders**\n\n`;[m
+[32m+[m[41m      [m
+[32m+[m[32m      workOrders.forEach((wo, index) => {[m
+[32m+[m[32m        const priorityEmoji = priorityEmojis[wo.priority] || '⚪';[m
+[32m+[m[32m        const statusEmoji = statusEmojis[wo.status] || '❓';[m
+[32m+[m[32m        const creator = wo.byUser ? `${wo.byUser.firstName || 'Unknown'}` : 'Unknown';[m
+[32m+[m[41m        [m
+[32m+[m[32m        workOrdersList += `${index + 1}. ${statusEmoji} **WO#${wo.id}**\n`;[m
+[32m+[m[32m        workOrdersList += `   ${priorityEmoji} ${wo.priority} | ${wo.typeOfWork}\n`;[m
+[32m+[m[32m        workOrdersList += `   📍 ${wo.location}\n`;[m
+[32m+[m[32m        workOrdersList += `   👤 ${creator} | ${new Date(wo.createdAt).toLocaleDateString()}\n\n`;[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('🔍 Filter by Status', 'wo_filter_menu')],[m
+[32m+[m[32m        [Markup.button.callback('📊 Statistics', 'wo_stats')],[m
+[32m+[m[32m        [Markup.button.callback('➕ Create New', 'wo_new')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(workOrdersList, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...keyboard[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_work_orders');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض تفاصيل بلاغ معين[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showWorkOrderDetails(ctx, workOrderId) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, workOrder, membership } = await SecurityManager.validateWorkOrderAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        workOrderId,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician', 'user'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      const statusHistory = await prisma.statusHistory.findMany({[m
+[32m+[m[32m        where: { workOrderId: workOrder.id },[m
+[32m+[m[32m        orderBy: { createdAt: 'desc' }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      const priorityEmojis = {[m
+[32m+[m[32m        'high': '🔴',[m
+[32m+[m[32m        'medium': '🟡',[m
+[32m+[m[32m        'low': '🟢'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      const statusEmojis = {[m
+[32m+[m[32m        'open': '📋',[m
+[32m+[m[32m        'in_progress': '🔄',[m
+[32m+[m[32m        'done': '✅',[m
+[32m+[m[32m        'closed': '🔒'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      const priorityEmoji = priorityEmojis[workOrder.priority] || '⚪';[m
+[32m+[m[32m      const statusEmoji = statusEmojis[workOrder.status] || '❓';[m
+[32m+[m
+[32m+[m[32m      let detailsMessage = `📋 **Work Order #${workOrder.id}**\n\n`;[m
+[32m+[m[32m      detailsMessage += `${statusEmoji} **Status:** ${workOrder.status.replace('_', ' ').toUpperCase()}\n`;[m
+[32m+[m[32m      detailsMessage += `${priorityEmoji} **Priority:** ${workOrder.priority.toUpperCase()}\n\n`;[m
+[32m+[m[32m      detailsMessage += `🔧 **Type:** ${workOrder.typeOfWork}\n`;[m
+[32m+[m[32m      detailsMessage += `🛠️ **Service:** ${workOrder.typeOfService}\n`;[m
+[32m+[m[32m      detailsMessage += `📍 **Location:** ${workOrder.location}\n`;[m
+[32m+[m[32m      if (workOrder.equipment) {[m
+[32m+[m[32m        detailsMessage += `⚙️ **Equipment:** ${workOrder.equipment}\n`;[m
+[32m+[m[32m      }[m
+[32m+[m[32m      detailsMessage += `📝 **Description:** ${workOrder.description}\n\n`;[m
+[32m+[m[32m      detailsMessage += `👤 **Created by:** ${user.firstName || 'Unknown'}\n`;[m
+[32m+[m[32m      detailsMessage += `📅 **Created:** ${new Date(workOrder.createdAt).toLocaleString()}\n`;[m
+[32m+[m[32m      detailsMessage += `🔄 **Last updated:** ${new Date(workOrder.updatedAt).toLocaleString()}\n\n`;[m
+[32m+[m
+[32m+[m[32m      if (statusHistory.length > 0) {[m
+[32m+[m[32m        detailsMessage += `📜 **Status History:**\n`;[m
+[32m+[m[32m        statusHistory.slice(0, 3).forEach((history, index) => {[m
+[32m+[m[32m          const oldStatus = history.oldStatus || 'N/A';[m
+[32m+[m[32m          const newStatus = history.newStatus.replace('_', ' ').toUpperCase();[m
+[32m+[m[32m          detailsMessage += `${index + 1}. ${oldStatus} → ${newStatus}\n`;[m
+[32m+[m[32m          detailsMessage += `   ${new Date(history.createdAt).toLocaleString()}\n`;[m
+[32m+[m[32m        });[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const keyboard = [];[m
+[32m+[m[41m      [m
+[32m+[m[32m      // أزرار تغيير الحالة (للمشرفين والفنيين)[m
+[32m+[m[32m      if (['facility_admin', 'supervisor', 'technician'].includes(membership.role)) {[m
+[32m+[m[32m        keyboard.push([[m
+[32m+[m[32m          Markup.button.callback('🔄 Change Status', `wo_status_menu|${workOrder.id}`)[m
+[32m+[m[32m        ]);[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      keyboard.push([m
+[32m+[m[32m        [Markup.button.callback('📜 View History', `wo_history|${workOrder.id}`)],[m
+[32m+[m[32m        [Markup.button.callback('📋 Back to List', 'wo_list')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(detailsMessage, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...Markup.inlineKeyboard(keyboard)[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_work_order_details');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * تغيير حالة البلاغ[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async changeWorkOrderStatus(ctx, workOrderId, newStatus) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, workOrder, membership } = await SecurityManager.validateWorkOrderAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        workOrderId,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      const validStatuses = ['open', 'in_progress', 'done', 'closed'];[m
+[32m+[m[32m      if (!validStatuses.includes(newStatus)) {[m
+[32m+[m[32m        return ctx.reply('❌ Invalid status.');[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      const oldStatus = workOrder.status;[m
+[32m+[m[41m      [m
+[32m+[m[32m      // تحديث حالة البلاغ[m
+[32m+[m[32m      await prisma.workOrder.update({[m
+[32m+[m[32m        where: { id: workOrder.id },[m
+[32m+[m[32m        data: { status: newStatus }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // إنشاء سجل التغيير[m
+[32m+[m[32m      await prisma.statusHistory.create({[m
+[32m+[m[32m        data: {[m
+[32m+[m[32m          workOrderId: workOrder.id,[m
+[32m+[m[32m          oldStatus: oldStatus,[m
+[32m+[m[32m          newStatus: newStatus,[m
+[32m+[m[32m          createdAt: new Date()[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      const statusEmojis = {[m
+[32m+[m[32m        'open': '📋',[m
+[32m+[m[32m        'in_progress': '🔄',[m
+[32m+[m[32m        'done': '✅',[m
+[32m+[m[32m        'closed': '🔒'[m
+[32m+[m[32m      };[m
+[32m+[m
+[32m+[m[32m      const statusEmoji = statusEmojis[newStatus] || '❓';[m
+[32m+[m
+[32m+[m[32m      await ctx.reply([m
+[32m+[m[32m        `✅ **Work Order Status Updated!**\n\n` +[m
+[32m+[m[32m        `📋 **Work Order #${workOrder.id}**\n` +[m
+[32m+[m[32m        `${statusEmoji} **New Status:** ${newStatus.replace('_', ' ').toUpperCase()}\n\n` +[m
+[32m+[m[32m        `👤 **Updated by:** ${user.firstName || 'Unknown'}\n` +[m
+[32m+[m[32m        `📅 **Updated:** ${new Date().toLocaleString()}`,[m
+[32m+[m[32m        {[m
+[32m+[m[32m          parse_mode: 'Markdown',[m
+[32m+[m[32m          ...Markup.inlineKeyboard([[m
+[32m+[m[32m            [Markup.button.callback('📋 View Work Order', `wo_view|${workOrder.id}`)],[m
+[32m+[m[32m            [Markup.button.callback('📋 Back to List', 'wo_list')],[m
+[32m+[m[32m            [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')][m
+[32m+[m[32m          ])[m
+[32m+[m[32m        }[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }, ctx, 'change_work_order_status');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * عرض إحصائيات البلاغات[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async showWorkOrderStats(ctx) {[m
+[32m+[m[32m    return ErrorHandler.safeExecute(async () => {[m
+[32m+[m[32m      const { user, facility } = await SecurityManager.validateFacilityAccess([m
+[32m+[m[32m        ctx,[m[41m [m
+[32m+[m[32m        null,[m[41m [m
+[32m+[m[32m        ['facility_admin', 'supervisor', 'technician', 'user'][m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      const stats = await this.getWorkOrderStats(facility.id);[m
+[32m+[m
+[32m+[m[32m      const statsMessage = `📊 **Work Order Statistics**[m
+[32m+[m
+[32m+[m[32m📋 **Status Breakdown:**[m
+[32m+[m[32m• Open: ${stats.open} (${stats.openPercentage}%)[m
+[32m+[m[32m• In Progress: ${stats.inProgress} (${stats.inProgressPercentage}%)[m
+[32m+[m[32m• Done: ${stats.done} (${stats.donePercentage}%)[m
+[32m+[m[32m• Closed: ${stats.closed} (${stats.closedPercentage}%)[m
+[32m+[m
+[32m+[m[32m🔴 **Priority Breakdown:**[m
+[32m+[m[32m• High: ${stats.highPriority} (${stats.highPriorityPercentage}%)[m
+[32m+[m[32m• Medium: ${stats.mediumPriority} (${stats.mediumPriorityPercentage}%)[m
+[32m+[m[32m• Low: ${stats.lowPriority} (${stats.lowPriorityPercentage}%)[m
+[32m+[m
+[32m+[m[32m📈 **Recent Activity:**[m
+[32m+[m[32m• Today: ${stats.today} new work orders[m
+[32m+[m[32m• This Week: ${stats.thisWeek} new work orders[m
+[32m+[m[32m• This Month: ${stats.thisMonth} new work orders[m
+[32m+[m
+[32m+[m[32m⏱️ **Performance:**[m
+[32m+[m[32m• Average Resolution Time: ${stats.avgResolutionTime} days[m
+[32m+[m[32m• On-Time Completion: ${stats.onTimeCompletion}%`;[m
+[32m+[m
+[32m+[m[32m      const keyboard = Markup.inlineKeyboard([[m
+[32m+[m[32m        [Markup.button.callback('📊 Detailed Reports', 'reports_menu')],[m
+[32m+[m[32m        [Markup.button.callback('📈 Performance Graph', 'performance_graph')],[m
+[32m+[m[32m        [Markup.button.callback('🔙 Back to List', 'wo_list')][m
+[32m+[m[32m      ]);[m
+[32m+[m
+[32m+[m[32m      await ctx.reply(statsMessage, {[m
+[32m+[m[32m        parse_mode: 'Markdown',[m
+[32m+[m[32m        ...keyboard[m
+[32m+[m[32m      });[m
+[32m+[m[32m    }, ctx, 'show_work_order_stats');[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  /**[m
+[32m+[m[32m   * الحصول على إحصائيات البلاغات[m
+[32m+[m[32m   */[m
+[32m+[m[32m  static async getWorkOrderStats(facilityId) {[m
+[32m+[m[32m    const now = new Date();[m
+[32m+[m[32m    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());[m
+[32m+[m[32m    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);[m
+[32m+[m[32m    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);[m
+[32m+[m
+[32m+[m[32m    const [[m
+[32m+[m[32m      total,[m
+[32m+[m[32m      open,[m
+[32m+[m[32m      inProgress,[m
+[32m+[m[32m      done,[m
+[32m+[m[32m      closed,[m
+[32m+[m[32m      highPriority,[m
+[32m+[m[32m      mediumPriority,[m
+[32m+[m[32m      lowPriority,[m
+[32m+[m[32m      today,[m
+[32m+[m[32m      thisWeek,[m
+[32m+[m[32m      thisMonth[m
+[32m+[m[32m    ] = await Promise.all([[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'open' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'in_progress' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'done' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, status: 'closed' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, priority: 'high' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, priority: 'medium' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, priority: 'low' } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: today } } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: weekAgo } } }),[m
+[32m+[m[32m      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: monthAgo } } })[m
+[32m+[m[32m    ]);[m
+[32m+[m
+[32m+[m[32m    return {[m
+[32m+[m[32m      total,[m
+[32m+[m[32m      open,[m
+[32m+[m[32m      inProgress,[m
+[32m+[m[32m      done,[m
+[32m+[m[32m      closed,[m
+[32m+[m[32m      highPriority,[m
+[32m+[m[32m      mediumPriority,[m
+[32m+[m[32m      lowPriority,[m
+[32m+[m[32m      today,[m
+[32m+[m[32m      thisWeek,[m
+[32m+[m[32m      thisMonth,[m
+[32m+[m[32m      openPercentage: total > 0 ? Math.round((open / total) * 100) : 0,[m
+[32m+[m[32m      inProgressPercentage: total > 0 ? Math.round((inProgress / total) * 100) : 0,[m
+[32m+[m[32m      donePercentage: total > 0 ? Math.round((done / total) * 100) : 0,[m
+[32m+[m[32m      closedPercentage: total > 0 ? Math.round((closed / total) * 100) : 0,[m
+[32m+[m[32m      highPriorityPercentage: total > 0 ? Math.round((highPriority / total) * 100) : 0,[m
+[32m+[m[32m      mediumPriorityPercentage: total > 0 ? Math.round((mediumPriority / total) * 100) : 0,[m
+[32m+[m[32m      lowPriorityPercentage: total > 0 ? Math.round((lowPriority / total) * 100) : 0,[m
+[32m+[m[32m      avgResolutionTime: '2.5', // Placeholder[m
+[32m+[m[32m      onTimeCompletion: 85 // Placeholder[m
+[32m+[m[32m    };[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mmodule.exports = WorkOrderController;[m
