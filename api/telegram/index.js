@@ -818,12 +818,12 @@ bot.on('text', async (ctx, next) => {
     // Authenticate user first
     const { user } = await SecurityManager.authenticateUser(ctx);
     
-    const flowState = flows.get(user.tgId.toString());
+    const flowState = flows.get(ctx.from.id);
     if (!flowState) return next();
     
     // Validate flow ownership
-    if (flowState.userId !== user.tgId.toString()) {
-      flows.delete(user.tgId.toString());
+    if (flowState.userId !== ctx.from.id.toString()) {
+      flows.delete(ctx.from.id);
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
@@ -1112,7 +1112,7 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Location
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1125,7 +1125,7 @@ bot.on('text', async (ctx, next) => {
           
           flowState.data.location = sanitizedLocation;
           flowState.step = 5;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           return ctx.reply(
             `🔧 **Work Order Creation (5/6)**\n\n` +
@@ -1144,7 +1144,7 @@ bot.on('text', async (ctx, next) => {
         // Step 5: Equipment (optional)
         if (flowState.step === 5) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1158,9 +1158,9 @@ bot.on('text', async (ctx, next) => {
           }
           
           flowState.step = 6;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
-          const updatedFlow = flows.get(user.tgId.toString());
+          const updatedFlow = flows.get(ctx.from.id);
           return ctx.reply(
             `🔧 **Work Order Creation (6/6)**\n\n` +
             `✅ **Type:** ${updatedFlow.data.typeOfWork}\n` +
@@ -1178,7 +1178,7 @@ bot.on('text', async (ctx, next) => {
         // Step 6: Description
         if (flowState.step === 6) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1190,19 +1190,19 @@ bot.on('text', async (ctx, next) => {
           }
           
           flowState.data.description = sanitizedDescription;
-          flows.set(user.tgId.toString(), flowState);
+          flows.set(ctx.from.id, flowState);
           
           // Check plan limits before creating work order
           try {
             await PlanManager.checkPlanLimit(user.activeFacilityId, 'workOrders', 1);
           } catch (error) {
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
           }
           
           // Create work order
           try {
-            const finalFlow = flows.get(user.tgId.toString());
+            const finalFlow = flows.get(ctx.from.id);
             const workOrder = await prisma.workOrder.create({
               data: {
                 facilityId: user.activeFacilityId,
@@ -1217,7 +1217,7 @@ bot.on('text', async (ctx, next) => {
               }
             });
             
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             
             await ctx.reply(
               `✅ **Work Order Created Successfully!**\n\n` +
@@ -1238,7 +1238,7 @@ bot.on('text', async (ctx, next) => {
             );
           } catch (error) {
             console.error('Error creating work order:', error);
-            flows.delete(user.tgId.toString());
+            flows.delete(ctx.from.id);
             await ctx.reply('⚠️ An error occurred while creating the work order. Please try again.');
           }
         }
@@ -1387,20 +1387,20 @@ bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
     
-    const flowState = flows.get(user.tgId.toString());
+    const flowState = flows.get(ctx.from.id);
     if (!flowState || flowState.flow !== 'wo_new') {
       return ctx.reply('⚠️ Invalid flow state. Please start over.');
     }
     
     // Validate flow ownership
-    if (flowState.userId !== user.tgId.toString()) {
-      flows.delete(user.tgId.toString());
+    if (flowState.userId !== ctx.from.id.toString()) {
+      flows.delete(ctx.from.id);
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
     flowState.data.typeOfWork = ctx.match[1];
     flowState.step = 2;
-    flows.set(user.tgId.toString(), flowState);
+    flows.set(ctx.from.id, flowState);
     
     // Step 2: Choose service type
     const serviceTypeButtons = [
@@ -1431,6 +1431,12 @@ bot.action(/wo_service\|(electrical|mechanical|plumbing|hvac|structural|it|gener
       return ctx.reply('⚠️ Invalid flow state. Please start over.');
     }
     
+    // Validate flow ownership
+    if (flowState.userId !== ctx.from.id.toString()) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
     flowState.data.typeOfService = ctx.match[1];
     flowState.step = 3;
     flows.set(ctx.from.id, flowState);
@@ -1458,6 +1464,12 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
     const flowState = flows.get(ctx.from.id);
     if (!flowState || flowState.flow !== 'wo_new') {
       return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (flowState.userId !== ctx.from.id.toString()) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
     flowState.data.priority = ctx.match[1];
@@ -1513,7 +1525,7 @@ bot.action('wo_cancel', async (ctx) => {
   
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
-    flows.delete(user.tgId.toString());
+    flows.delete(ctx.from.id);
     await ctx.reply('❌ Work order creation cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
