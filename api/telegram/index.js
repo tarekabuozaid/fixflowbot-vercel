@@ -1,9 +1,9 @@
 const { Telegraf, Markup } = require('telegraf');
 
 // Import Controllers
-const UserController = require('./controllers/userController');
-const FacilityController = require('./controllers/facilityController');
-const WorkOrderController = require('./controllers/workOrderController');
+const UserController = require('../../lib/telegram/controllers/userController');
+const FacilityController = require('../../lib/telegram/controllers/facilityController');
+const WorkOrderController = require('../../lib/telegram/controllers/workOrderController');
 
 // Import Middleware
 const {
@@ -16,12 +16,12 @@ const {
   facilityRateLimit,
   validateFlowData,
   validateFlowStepInput
-} = require('./middleware');
+} = require('../../lib/telegram/middleware');
 
 // Import utilities
-const SecurityManager = require('./utils/security');
-const FlowManager = require('./utils/flowManager');
-const ErrorHandler = require('./utils/errorHandler');
+const SecurityManager = require('../../lib/telegram/utils/security');
+const FlowManager = require('../../lib/telegram/utils/flowManager');
+const ErrorHandler = require('../../lib/telegram/utils/errorHandler');
 
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {

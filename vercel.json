@@ -1,14 +1,11 @@
 {
-  "version": 2,
+  "rewrites": [
+    { "source": "/api/telegram/(.*)", "destination": "/api/telegram/index.js" },
+    { "source": "/api/health", "destination": "/api/health/index.js" }
+  ],
   "functions": {
     "api/telegram/index.js": {
       "maxDuration": 30
     }
-  },
-  "routes": [
-    {
-      "src": "/api/telegram",
-      "dest": "/api/telegram/index.js"
-    }
-  ]
+  }
 }
