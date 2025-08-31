@@ -1,9 +1,33 @@
 /**
- * Flow Manager - Handles user flow states and session management
+ * ============================================================================
+ * FLOW MANAGER - إدارة الفلوهات التفاعلية
+ * ============================================================================
+ * 
+ * هذا الملف يدير الفلوهات التفاعلية للمستخدمين في البوت
+ * 
+ * الميزات الرئيسية:
+ * - إدارة حالة الفلو لكل مستخدم
+ * - تتبع الخطوات الحالية
+ * - حفظ البيانات المؤقتة
+ * - تنظيف الفلوهات المنتهية الصلاحية
+ * - التحقق من ملكية الفلو
+ * 
+ * أنواع الفلوهات المدعومة:
+ * - reg_fac: تسجيل منشأة جديدة
+ * - register_user: تسجيل مستخدم عادي
+ * - register_technician: تسجيل فني
+ * - register_supervisor: تسجيل مشرف
+ * - work_order_new: إنشاء طلب صيانة جديد
+ * - reminder_new: إنشاء تذكير جديد
+ * 
+ * تاريخ آخر تحديث: 31 أغسطس 2025
+ * المطور: Tarek Abu Ozaid
+ * ============================================================================
  */
 
-// In-memory flow state per user with security
-// Each entry: { flow: string, step: number|string, data: object, userId: string, timestamp: number }
+// ===== Flow State Storage =====
+// تخزين حالة الفلو في الذاكرة مع الأمان
+// كل مدخل يحتوي على: { flow: string, step: number|string, data: object, userId: string, timestamp: number }
 const flows = new Map();
 
 class FlowManager {

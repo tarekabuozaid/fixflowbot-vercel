@@ -1,11 +1,31 @@
+/**
+ * ============================================================================
+ * SECURITY MANAGER - إدارة الأمان والتحقق
+ * ============================================================================
+ * 
+ * هذا الملف يحتوي على جميع وظائف الأمان والتحقق في البوت
+ * 
+ * الميزات الرئيسية:
+ * - تنظيف المدخلات من المستخدمين (XSS Protection)
+ * - التحقق من هوية المستخدمين
+ * - التحقق من صلاحيات الوصول
+ * - Rate Limiting (تقييد معدل الطلبات)
+ * - التحقق من صحة البيانات
+ * 
+ * تاريخ آخر تحديث: 31 أغسطس 2025
+ * المطور: Tarek Abu Ozaid
+ * ============================================================================
+ */
+
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
 
-// Rate limiting per user (requests per minute)
+// ===== Rate Limiting Configuration =====
+// تقييد معدل الطلبات لكل مستخدم (طلبات في الدقيقة)
 const rateLimit = new Map();
-const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;
+const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;        // عدد الطلبات المسموحة
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;  // نافذة الوقت (بالمللي ثانية)
 
 class SecurityManager {
   /**

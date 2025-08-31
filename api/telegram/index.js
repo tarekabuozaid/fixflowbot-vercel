@@ -1,11 +1,38 @@
+/**
+ * ============================================================================
+ * FIXFLOW BOT - MAIN ENTRY POINT
+ * ============================================================================
+ * 
+ * هذا الملف هو النقطة الرئيسية لبوت FixFlow لإدارة الصيانة
+ * يحتوي على جميع الأوامر والمعالجات والفلوهات التفاعلية
+ * 
+ * الميزات الرئيسية:
+ * - إدارة المنشآت والأعضاء
+ * - إنشاء ومتابعة طلبات الصيانة
+ * - نظام التقارير والإحصائيات
+ * - إدارة التذكيرات والإشعارات
+ * - نظام الأدوار والصلاحيات
+ * 
+ * البنية المعمارية:
+ * - SecurityManager: إدارة الأمان والتحقق
+ * - FlowManager: إدارة الفلوهات التفاعلية
+ * - PlanManager: إدارة خطط الاشتراك
+ * - ErrorHandler: معالجة الأخطاء المركزية
+ * 
+ * تاريخ آخر تحديث: 31 أغسطس 2025
+ * المطور: Tarek Abu Ozaid
+ * ============================================================================
+ */
+
 const { Telegraf, Markup } = require('telegraf');
 const { PrismaClient } = require('@prisma/client');
 
-// Import new modular utilities
-const SecurityManager = require('./utils/security');
-const FlowManager = require('./utils/flowManager');
-const PlanManager = require('./utils/planManager');
-const ErrorHandler = require('./utils/errorHandler');
+// ===== استيراد الوحدات الجديدة (Modular Utilities) =====
+// هذه الوحدات تم تطويرها حديثاً لتحسين الأمان والأداء
+const SecurityManager = require('./utils/security');      // إدارة الأمان والتحقق
+const FlowManager = require('./utils/flowManager');       // إدارة الفلوهات التفاعلية
+const PlanManager = require('./utils/planManager');       // إدارة خطط الاشتراك
+const ErrorHandler = require('./utils/errorHandler');     // معالجة الأخطاء المركزية
 
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {
@@ -33,19 +60,34 @@ const prisma = new PrismaClient({
   }
 });
 
-// ===== LEGACY FUNCTIONS (for backward compatibility) =====
+// ===== الدوال المحلية (Local Functions) =====
+// هذه الدوال تستخدم الوحدات الجديدة داخلياً للحفاظ على التوافق
 
-// Legacy rate limiting (will be replaced by SecurityManager)
+// ===== متغيرات البيئة والإعدادات =====
+// Legacy rate limiting (سيتم استبدالها بـ SecurityManager)
 const rateLimit = new Map();
-const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;
+const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;        // عدد الطلبات المسموحة
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;  // نافذة الوقت (بالمللي ثانية)
 
-// Legacy sanitization function (will be replaced by SecurityManager)
+/**
+ * تنظيف المدخلات من المستخدمين
+ * @param {string} input - النص المدخل
+ * @param {number} maxLength - الحد الأقصى للطول (افتراضي: 1000)
+ * @returns {string} النص المنظف
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 function sanitizeInput(input, maxLength = 1000) {
   return SecurityManager.sanitizeInput(input, maxLength);
 }
 
-// Legacy authentication function (will be replaced by SecurityManager)
+/**
+ * التحقق من هوية المستخدم
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 async function authenticateUser(ctx) {
   try {
     return await SecurityManager.authenticateUser(ctx);
@@ -55,7 +97,15 @@ async function authenticateUser(ctx) {
   }
 }
 
-// Legacy facility access validation (will be replaced by SecurityManager)
+/**
+ * التحقق من صلاحية الوصول للمنشأة
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @param {Array} requiredRoles - الأدوار المطلوبة
+ * @returns {Promise<Object>} نتيجة التحقق
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
   try {
     return await SecurityManager.validateFacilityAccess(ctx, facilityId, requiredRoles);
@@ -65,7 +115,15 @@ async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
   }
 }
 
-// Legacy work order access validation (will be replaced by SecurityManager)
+/**
+ * التحقق من صلاحية الوصول لطلب الصيانة
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @param {BigInt} workOrderId - معرف طلب الصيانة
+ * @param {Array} requiredRoles - الأدوار المطلوبة
+ * @returns {Promise<Object>} نتيجة التحقق
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
   try {
     return await SecurityManager.validateWorkOrderAccess(ctx, workOrderId, requiredRoles);
@@ -75,7 +133,13 @@ async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
   }
 }
 
-// Legacy master access validation (will be replaced by SecurityManager)
+/**
+ * التحقق من صلاحيات الماستر
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {boolean} true إذا كان المستخدم ماستر
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 function validateMasterAccess(ctx) {
   try {
     return SecurityManager.validateMasterAccess(ctx);
@@ -85,19 +149,28 @@ function validateMasterAccess(ctx) {
   }
 }
 
-// Plan limits and validation
+// ===== خطط الاشتراك والحدود =====
+/**
+ * حدود خطط الاشتراك المختلفة
+ * 
+ * Free: الخطة المجانية - مناسبة للمنشآت الصغيرة
+ * Pro: الخطة الاحترافية - مناسبة للمنشآت المتوسطة
+ * Business: الخطة التجارية - مناسبة للمنشآت الكبيرة
+ * 
+ * ملاحظة: هذه الحدود يتم التحقق منها عبر PlanManager
+ */
 const PLAN_LIMITS = {
   Free: {
-    members: 5,
-    workOrders: 50,
-    reports: 3,
-    reminders: 10
+    members: 5,        // عدد الأعضاء المسموح
+    workOrders: 50,    // عدد طلبات الصيانة شهرياً
+    reports: 3,        // عدد التقارير المسموحة
+    reminders: 10      // عدد التذكيرات المسموحة
   },
   Pro: {
-    members: 20,
-    workOrders: 200,
-    reports: 15,
-    reminders: 50
+    members: 20,       // عدد الأعضاء المسموح
+    workOrders: 200,   // عدد طلبات الصيانة شهرياً
+    reports: 15,       // عدد التقارير المسموحة
+    reminders: 50      // عدد التذكيرات المسموحة
   },
   Business: {
     members: 100,
@@ -127,15 +200,36 @@ async function getPlanInfo(facilityId) {
   }
 }
 
-// Legacy input validation helpers (will be replaced by SecurityManager)
+// ===== دوال التحقق من المدخلات =====
+/**
+ * التحقق من صحة البريد الإلكتروني
+ * @param {string} email - البريد الإلكتروني للتحقق
+ * @returns {boolean} true إذا كان البريد صحيح
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 function validateEmail(email) {
   return SecurityManager.validateEmail(email);
 }
 
+/**
+ * التحقق من صحة رقم الهاتف
+ * @param {string} phone - رقم الهاتف للتحقق
+ * @returns {boolean} true إذا كان الرقم صحيح
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 function validatePhone(phone) {
   return SecurityManager.validatePhone(phone);
 }
 
+/**
+ * التحقق من صحة الاسم
+ * @param {string} name - الاسم للتحقق
+ * @returns {boolean} true إذا كان الاسم صحيح
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 function validateName(name) {
   return SecurityManager.validateName(name);
 }
@@ -203,7 +297,14 @@ setInterval(() => {
   FlowManager.cleanupExpiredFlows();
 }, 30 * 60 * 1000); // Check every 30 minutes
 
-// Helpers with security
+// ===== دوال إدارة المستخدمين =====
+/**
+ * التحقق من صلاحيات الماستر
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {boolean} true إذا كان المستخدم ماستر
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 const isMaster = (ctx) => {
   try {
     return SecurityManager.validateMasterAccess(ctx);
@@ -212,17 +313,45 @@ const isMaster = (ctx) => {
   }
 };
 
-// Secure user management functions
+/**
+ * التأكد من وجود المستخدم والحصول على بياناته
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 async function ensureUser(ctx) {
   const { user } = await SecurityManager.authenticateUser(ctx);
   return user;
 }
 
+/**
+ * الحصول على بيانات المستخدم
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم
+ * 
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ */
 async function getUser(ctx) {
   const { user } = await SecurityManager.authenticateUser(ctx);
   return user;
 }
 
+/**
+ * عرض القائمة الرئيسية للبوت
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * 
+ * هذه الدالة تعرض القائمة الرئيسية حسب حالة المستخدم:
+ * - المستخدمين الجدد: خيارات التسجيل والانضمام
+ * - المستخدمين النشطين: القائمة الكاملة مع الأزرار الأربعة الرئيسية
+ * - الماستر: إضافة لوحة تحكم الماستر
+ * 
+ * الأزرار الرئيسية:
+ * - 🏠 Home: لوحة التحكم الرئيسية
+ * - 📊 Reports: التقارير والإحصائيات
+ * - 🔧 Work: إدارة طلبات الصيانة
+ * - 👑 Admin: إدارة المنشأة والأعضاء
+ */
 async function showMainMenu(ctx) {
   try {
     const { user } = await SecurityManager.authenticateUser(ctx);
@@ -273,7 +402,22 @@ async function showMainMenu(ctx) {
 
 // Remove duplicate start handler - using bot.command('start') instead
 
-// === Official Commands with Security ===
+// ===== الأوامر الرسمية مع الأمان =====
+
+/**
+ * أمر تسجيل منشأة جديدة
+ * 
+ * هذا الأمر يبدأ فلو تسجيل منشأة جديدة:
+ * 1. اسم المنشأة (الخطوة 1/4)
+ * 2. المدينة (الخطوة 2/4)
+ * 3. رقم الهاتف (الخطوة 3/4)
+ * 4. اختيار الخطة (الخطوة 4/4)
+ * 
+ * ملاحظات:
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم إدارة الفلو عبر FlowManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
+ */
 bot.command('registerfacility', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
@@ -282,12 +426,32 @@ bot.command('registerfacility', async (ctx) => {
   }, ctx, 'registerfacility_command');
 });
 
+/**
+ * أمر الانضمام لمنشأة
+ * 
+ * هذا الأمر يعرض قائمة المنشآت النشطة المتاحة للانضمام
+ * المستخدم يمكنه اختيار منشأة والانضمام إليها
+ * 
+ * ملاحظات:
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
+ */
 bot.command('join', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     await requireMembershipOrList(ctx);
   }, ctx, 'join_command');
 });
 
+/**
+ * أمر التبديل بين المنشآت
+ * 
+ * هذا الأمر يعرض قائمة المنشآت التي ينتمي إليها المستخدم
+ * ويسمح له بالتبديل بينها
+ * 
+ * ملاحظات:
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
+ */
 bot.command('switch', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
@@ -433,7 +597,18 @@ bot.action('join_fac_start', async (ctx) => {
   }, ctx, 'join_fac_start');
 });
 
-// Helper to list active facilities and allow user to select one
+/**
+ * عرض قائمة المنشآت النشطة للانضمام
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * 
+ * هذه الدالة تعرض قائمة المنشآت النشطة المتاحة للانضمام
+ * المستخدم يمكنه اختيار منشأة والانضمام إليها
+ * 
+ * ملاحظات:
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
+ * - يتم تنظيف أسماء المنشآت عبر SecurityManager.sanitizeInput
+ */
 async function requireMembershipOrList(ctx) {
   try {
     const { user } = await SecurityManager.authenticateUser(ctx);
@@ -764,6 +939,21 @@ bot.action('wo_list', async (ctx) => {
   }, ctx, 'wo_list');
 });
 
+/**
+ * التحقق من وجود عضوية نشطة للمستخدم
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم والعضوية
+ * 
+ * هذه الدالة تتحقق من أن المستخدم:
+ * - لديه عضوية نشطة في منشأة
+ * - المنشأة نشطة
+ * - المستخدم نشط
+ * 
+ * ملاحظات:
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم إرجاع بيانات المستخدم والعضوية
+ * - يتم رفع خطأ إذا لم توجد عضوية نشطة
+ */
 async function requireActiveMembership(ctx) {
   try {
     const { user } = await SecurityManager.authenticateUser(ctx);
@@ -2716,7 +2906,35 @@ bot.action('facility_settings', async (ctx) => {
 });
 
 // === Notification System ===
-// Helper function to create notifications
+/**
+ * إنشاء إشعار جديد
+ * @param {BigInt|string} userId - معرف المستخدم
+ * @param {BigInt|string} facilityId - معرف المنشأة (اختياري)
+ * @param {string} type - نوع الإشعار
+ * @param {string} title - عنوان الإشعار
+ * @param {string} message - رسالة الإشعار
+ * @param {Object} data - بيانات إضافية (اختياري)
+ * 
+ * أنواع الإشعارات المدعومة:
+ * - work_order_created: إنشاء طلب صيانة جديد
+ * - work_order_status_changed: تغيير حالة طلب الصيانة
+ * - work_order_assigned: تعيين طلب صيانة
+ * - member_joined: انضمام عضو جديد
+ * - member_left: مغادرة عضو
+ * - facility_activated: تفعيل منشأة
+ * - high_priority_alert: تنبيه أولوية عالية
+ * - daily_summary: ملخص يومي
+ * - weekly_report: تقرير أسبوعي
+ * - system_alert: تنبيه نظام
+ * - new_member_request: طلب انضمام جديد
+ * - membership_approved: موافقة على العضوية
+ * - role_changed: تغيير الدور
+ * 
+ * ملاحظات:
+ * - يتم حفظ الإشعار في قاعدة البيانات
+ * - يتم معالجة الأخطاء بشكل آمن
+ * - البيانات الإضافية يتم تحويلها إلى JSON
+ */
 async function createNotification(userId, facilityId, type, title, message, data = null) {
   try {
     await prisma.notification.create({
@@ -2734,7 +2952,21 @@ async function createNotification(userId, facilityId, type, title, message, data
   }
 }
 
-// Helper function to send notification to user via Telegram
+/**
+ * إرسال إشعار للمستخدم عبر تيليجرام
+ * @param {BigInt|string} userId - معرف المستخدم
+ * @param {string} title - عنوان الإشعار
+ * @param {string} message - رسالة الإشعار
+ * @param {Array} buttons - أزرار تفاعلية (اختياري)
+ * 
+ * هذه الدالة ترسل إشعار مباشر للمستخدم عبر تيليجرام
+ * 
+ * ملاحظات:
+ * - يتم البحث عن المستخدم في قاعدة البيانات
+ * - يتم التحقق من وجود معرف تيليجرام
+ * - يتم إرسال الرسالة مع الأزرار التفاعلية (إن وجدت)
+ * - يتم معالجة الأخطاء بشكل آمن
+ */
 async function sendTelegramNotification(userId, title, message, buttons = null) {
   try {
     const user = await prisma.user.findUnique({
@@ -3443,8 +3675,39 @@ bot.action('notification_settings', async (ctx) => {
   }
 });
 
-// === Reminder System ===
-// Helper function to create reminders
+// ===== نظام التذكيرات =====
+/**
+ * إنشاء تذكير جديد
+ * @param {BigInt|string} facilityId - معرف المنشأة
+ * @param {BigInt|string} createdByUserId - معرف منشئ التذكير
+ * @param {string} type - نوع التذكير
+ * @param {string} title - عنوان التذكير
+ * @param {string} message - رسالة التذكير
+ * @param {Date} scheduledFor - تاريخ الاستحقاق
+ * @param {string} frequency - تكرار التذكير (افتراضي: once)
+ * @param {Object} data - بيانات إضافية (اختياري)
+ * 
+ * أنواع التذكيرات المدعومة:
+ * - maintenance: صيانة دورية
+ * - inspection: فحص دوري
+ * - cleaning: تنظيف دوري
+ * - calibration: معايرة دورية
+ * - replacement: استبدال دوري
+ * - custom: تذكير مخصص
+ * 
+ * تكرارات التذكيرات المدعومة:
+ * - once: مرة واحدة
+ * - daily: يومياً
+ * - weekly: أسبوعياً
+ * - monthly: شهرياً
+ * - quarterly: كل 3 أشهر
+ * - yearly: سنوياً
+ * 
+ * ملاحظات:
+ * - يتم حفظ التذكير في قاعدة البيانات
+ * - يتم تحويل البيانات الإضافية إلى JSON
+ * - يتم معالجة الأخطاء بشكل آمن
+ */
 async function createReminder(facilityId, createdByUserId, type, title, message, scheduledFor, frequency = 'once', data = null) {
   try {
     await prisma.reminder.create({
@@ -3464,7 +3727,21 @@ async function createReminder(facilityId, createdByUserId, type, title, message,
   }
 }
 
-// Helper function to send reminder to facility members
+/**
+ * إرسال تذكير لجميع أعضاء المنشأة
+ * @param {BigInt|string} facilityId - معرف المنشأة
+ * @param {string} title - عنوان التذكير
+ * @param {string} message - رسالة التذكير
+ * @param {Array} buttons - أزرار تفاعلية (اختياري)
+ * 
+ * هذه الدالة ترسل تذكير لجميع الأعضاء النشطين في المنشأة
+ * 
+ * ملاحظات:
+ * - يتم البحث عن جميع الأعضاء في المنشأة
+ * - يتم إرسال التذكير لكل عضو لديه معرف تيليجرام
+ * - يتم معالجة الأخطاء لكل عضو على حدة
+ * - يتم إضافة أزرار تفاعلية (إن وجدت)
+ */
 async function sendReminderToFacility(facilityId, title, message, buttons = null) {
   try {
     const members = await prisma.facilityMember.findMany({
@@ -5753,7 +6030,22 @@ bot.action(/set_role\|(\d+)\|(\w+)/, async (ctx) => {
   }
 });
 
-// Webhook handler for Vercel
+// ===== Webhook Handler for Vercel =====
+/**
+ * معالج Webhook لـ Vercel
+ * 
+ * هذا هو نقطة الدخول الرئيسية للبوت في بيئة Vercel
+ * يتم استدعاؤه عند وصول طلب من تيليجرام
+ * 
+ * @param {Object} req - طلب HTTP
+ * @param {Object} res - استجابة HTTP
+ * 
+ * ملاحظات:
+ * - يتم التحقق من نوع الطلب (POST فقط)
+ * - يتم تعيين timeout للطلب (25 ثانية)
+ * - يتم معالجة الأخطاء بشكل آمن
+ * - يتم تسجيل جميع الطلبات للـ debugging
+ */
 module.exports = async (req, res) => {
   console.log('Webhook received:', { method: req.method, body: req.body });
   

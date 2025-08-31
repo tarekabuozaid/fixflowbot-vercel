@@ -1,7 +1,15 @@
 {
   "name": "fixflowbot-vercel",
   "version": "1.0.0",
-  "description": "Telegram bot for FixFlow integration",
+  "description": "Telegram bot for FixFlow integration - نظام إدارة الصيانة الشامل",
+  "author": "Tarek Abu Ozaid",
+  "license": "MIT",
+  "keywords": ["telegram", "bot", "maintenance", "management", "fixflow", "arabic"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tarekabuozaid/fixflowbot"
+  },
+  "homepage": "https://fixflowbot.vercel.app",
   "type": "commonjs",
   "engines": {
     "node": "20.x"
