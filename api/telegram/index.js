@@ -194,7 +194,7 @@ bot.command('start', async (ctx) => {
   }, ctx, 'start_command');
 });
 
-// Legacy flow management (will be replaced by FlowManager)
+// Legacy flow management (DEPRECATED - using FlowManager instead)
 // Note: FlowManager handles cleanup automatically
 const flows = new Map();
 
@@ -277,13 +277,7 @@ async function showMainMenu(ctx) {
 bot.command('registerfacility', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
-    flows.set(user.tgId.toString(), { 
-      flow: 'reg_fac', 
-      step: 1, 
-      data: {}, 
-      userId: user.tgId.toString(),
-      timestamp: Date.now() 
-    });
+    FlowManager.setFlow(user.tgId.toString(), 'reg_fac', 1, {});
     await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
   }, ctx, 'registerfacility_command');
 });
@@ -425,13 +419,7 @@ bot.action('reg_fac_start', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    flows.set(ctx.from.id, { 
-      flow: 'reg_fac', 
-      step: 1, 
-      data: {}, 
-      userId: ctx.from.id.toString(),
-      timestamp: Date.now() 
-    });
+    FlowManager.setFlow(ctx.from.id.toString(), 'reg_fac', 1, {});
     await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
   }, ctx, 'reg_fac_start');
 });
@@ -492,14 +480,14 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     }
     
     // Get flow data
-    const flowState = flows.get(user.tgId.toString());
+    const flowState = FlowManager.getFlow(user.tgId.toString());
     if (!flowState || !['register_user', 'register_technician', 'register_supervisor'].includes(flowState.flow)) {
       return ctx.reply('⚠️ Invalid registration flow. Please start over.');
     }
     
     // Validate flow ownership
-    if (flowState.userId !== user.tgId.toString()) {
-      flows.delete(user.tgId.toString());
+    if (!FlowManager.validateFlowOwnership(user.tgId.toString(), flowState)) {
+      FlowManager.clearFlow(user.tgId.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
@@ -518,7 +506,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     });
     
     if (existingMembership) {
-      flows.delete(ctx.from.id);
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ You are already a member of this facility.');
     }
     
@@ -538,7 +526,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     try {
       await checkPlanLimit(facilityId, 'members', 1);
     } catch (error) {
-      flows.delete(user.tgId.toString());
+      FlowManager.clearFlow(user.tgId.toString());
       return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
     }
     
@@ -565,7 +553,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     });
     
     // Clear flow
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     
     const roleText = {
       'user': 'User',
@@ -617,7 +605,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     
   } catch (error) {
     console.error('Error joining facility:', error);
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     await ctx.reply('⚠️ An error occurred while processing your request.');
   }
 });
@@ -638,13 +626,7 @@ bot.action(/join_fac\|(\d+)/, async (ctx) => {
     }
     
     // Redirect to user registration flow
-    flows.set(user.tgId.toString(), { 
-      flow: 'register_user', 
-      step: 1, 
-      data: {}, 
-      userId: user.tgId.toString(),
-      timestamp: Date.now() 
-    });
+    FlowManager.setFlow(user.tgId.toString(), 'register_user', 1, {});
     
     await ctx.reply(
       '👤 **User Registration**\n\n' +
@@ -715,14 +697,8 @@ bot.action('wo_new', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     const { user } = await requireActiveMembership(ctx);
     
-    // Create flow state
-    flows.set(ctx.from.id, { 
-      flow: 'wo_new', 
-      step: 1, 
-      data: {}, 
-      userId: ctx.from.id.toString(),
-      timestamp: Date.now() 
-    });
+    // Create flow state using FlowManager
+    FlowManager.setFlow(ctx.from.id.toString(), 'wo_new', 1, {});
     
     // Step 1: Choose work type
     const workTypeButtons = [
@@ -818,12 +794,12 @@ bot.on('text', async (ctx, next) => {
     // Authenticate user first
     const { user } = await SecurityManager.authenticateUser(ctx);
     
-    const flowState = flows.get(ctx.from.id);
+    const flowState = FlowManager.getFlow(ctx.from.id.toString());
     if (!flowState) return next();
     
     // Validate flow ownership
-    if (flowState.userId !== ctx.from.id.toString()) {
-      flows.delete(ctx.from.id);
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
@@ -839,7 +815,7 @@ bot.on('text', async (ctx, next) => {
         // Step 1: Facility Name
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Facility registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -859,9 +835,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ A facility with this name already exists. Please choose a different name or type /cancel to exit:');
           }
           
-          flowState.data.name = sanitizedName;
-          flowState.step = 2;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { name: sanitizedName });
+          FlowManager.updateStep(ctx.from.id.toString(), 2);
           
           return ctx.reply(
             `✅ **Facility Name:** ${flowState.data.name}\n\n` +
@@ -875,7 +850,7 @@ bot.on('text', async (ctx, next) => {
         // Step 2: City
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Facility registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -886,9 +861,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ City must be at least 2 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.city = sanitizedCity;
-          flowState.step = 3;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { city: sanitizedCity });
+          FlowManager.updateStep(ctx.from.id.toString(), 3);
           
           return ctx.reply(
             `✅ **Facility Name:** ${flowState.data.name}\n` +
@@ -903,7 +877,7 @@ bot.on('text', async (ctx, next) => {
         // Step 3: Phone
         if (flowState.step === 3) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Facility registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -914,9 +888,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Phone must be at least 5 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.phone = sanitizedPhone;
-          flowState.step = 4;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { phone: sanitizedPhone });
+          FlowManager.updateStep(ctx.from.id.toString(), 4);
           
           const planButtons = [
             [{ text: '🆓 Free Plan', callback_data: 'regfac_plan|Free' }],
@@ -953,7 +926,7 @@ bot.on('text', async (ctx, next) => {
         // Step 1: Full Name
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -966,11 +939,12 @@ bot.on('text', async (ctx, next) => {
           
           // Split name into first and last name
           const nameParts = sanitizedName.split(' ');
-          flowState.data.firstName = nameParts[0];
-          flowState.data.lastName = nameParts.slice(1).join(' ') || null;
-          flowState.data.fullName = sanitizedName;
-          flowState.step = 2;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateData(ctx.from.id.toString(), {
+            firstName: nameParts[0],
+            lastName: nameParts.slice(1).join(' ') || null,
+            fullName: sanitizedName
+          });
+          FlowManager.updateStep(ctx.from.id.toString(), 2);
           
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
@@ -984,26 +958,25 @@ bot.on('text', async (ctx, next) => {
         // Step 2: Email (optional)
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
           
           if (text.toLowerCase() === '/skip') {
-            flowState.data.email = null;
+            FlowManager.updateData(ctx.from.id.toString(), { email: null });
           } else {
             const sanitizedEmail = sanitizeInput(text, 100);
             const validatedEmail = validateEmail(sanitizedEmail);
             if (validatedEmail) {
-              flowState.data.email = validatedEmail;
+              FlowManager.updateData(ctx.from.id.toString(), { email: validatedEmail });
             } else {
               return ctx.reply('⚠️ Invalid email format. Please enter a valid email or type /skip to skip:');
             }
           }
           
-          flowState.step = 3;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateStep(ctx.from.id.toString(), 3);
           
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
@@ -1018,26 +991,25 @@ bot.on('text', async (ctx, next) => {
         // Step 3: Phone (optional)
         if (flowState.step === 3) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
           
           if (text.toLowerCase() === '/skip') {
-            flowState.data.phone = null;
+            FlowManager.updateData(ctx.from.id.toString(), { phone: null });
           } else {
             const sanitizedPhone = sanitizeInput(text, 20);
             const validatedPhone = validatePhone(sanitizedPhone);
             if (validatedPhone) {
-              flowState.data.phone = validatedPhone;
+              FlowManager.updateData(ctx.from.id.toString(), { phone: validatedPhone });
             } else {
               return ctx.reply('⚠️ Invalid phone format. Please enter a valid phone number or type /skip to skip:');
             }
           }
           
-          flowState.step = 4;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateStep(ctx.from.id.toString(), 4);
           
           return ctx.reply(
             `✅ **Full Name:** ${flowState.data.fullName}\n` +
@@ -1054,24 +1026,23 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Job Title (optional)
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ User registration cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
           
           if (text.toLowerCase() === '/skip') {
-            flowState.data.jobTitle = null;
+            FlowManager.updateData(ctx.from.id.toString(), { jobTitle: null });
           } else {
             const sanitizedJobTitle = sanitizeInput(text, 50);
             if (sanitizedJobTitle.length < 2) {
               return ctx.reply('⚠️ Job title must be at least 2 characters. Try again or type /skip to skip:');
             }
-            flowState.data.jobTitle = sanitizedJobTitle;
+            FlowManager.updateData(ctx.from.id.toString(), { jobTitle: sanitizedJobTitle });
           }
           
-          flowState.step = 5;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateStep(ctx.from.id.toString(), 5);
           
           // Show facility selection
           const facilities = await prisma.facility.findMany({
@@ -1080,7 +1051,7 @@ bot.on('text', async (ctx, next) => {
           });
           
           if (!facilities.length) {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('⚠️ No active facilities found. Please contact the system administrator.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1112,7 +1083,7 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Location
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1123,9 +1094,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Location must be at least 3 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.location = sanitizedLocation;
-          flowState.step = 5;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { location: sanitizedLocation });
+          FlowManager.updateStep(ctx.from.id.toString(), 5);
           
           return ctx.reply(
             `🔧 **Work Order Creation (5/6)**\n\n` +
@@ -1144,7 +1114,7 @@ bot.on('text', async (ctx, next) => {
         // Step 5: Equipment (optional)
         if (flowState.step === 5) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1154,13 +1124,12 @@ bot.on('text', async (ctx, next) => {
             flowState.data.equipment = null;
           } else {
             const sanitizedEquipment = SecurityManager.sanitizeInput(text, 100);
-            flowState.data.equipment = sanitizedEquipment;
+            FlowManager.updateData(ctx.from.id.toString(), { equipment: sanitizedEquipment });
           }
           
-          flowState.step = 6;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateStep(ctx.from.id.toString(), 6);
           
-          const updatedFlow = flows.get(ctx.from.id);
+          const updatedFlow = FlowManager.getFlow(ctx.from.id.toString());
           return ctx.reply(
             `🔧 **Work Order Creation (6/6)**\n\n` +
             `✅ **Type:** ${updatedFlow.data.typeOfWork}\n` +
@@ -1178,7 +1147,7 @@ bot.on('text', async (ctx, next) => {
         // Step 6: Description
         if (flowState.step === 6) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Work order creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1189,20 +1158,19 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Description must be at least 10 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.description = sanitizedDescription;
-          flows.set(ctx.from.id, flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { description: sanitizedDescription });
           
           // Check plan limits before creating work order
           try {
             await PlanManager.checkPlanLimit(user.activeFacilityId, 'workOrders', 1);
           } catch (error) {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
           }
           
           // Create work order
           try {
-            const finalFlow = flows.get(ctx.from.id);
+            const finalFlow = FlowManager.getFlow(ctx.from.id.toString());
             const workOrder = await prisma.workOrder.create({
               data: {
                 facilityId: user.activeFacilityId,
@@ -1217,7 +1185,7 @@ bot.on('text', async (ctx, next) => {
               }
             });
             
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             
             await ctx.reply(
               `✅ **Work Order Created Successfully!**\n\n` +
@@ -1238,7 +1206,7 @@ bot.on('text', async (ctx, next) => {
             );
           } catch (error) {
             console.error('Error creating work order:', error);
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             await ctx.reply('⚠️ An error occurred while creating the work order. Please try again.');
           }
         }
@@ -1249,7 +1217,7 @@ bot.on('text', async (ctx, next) => {
         // Step 1: Title
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Reminder creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1260,9 +1228,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Title must be at least 3 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.title = sanitizedTitle;
-          flowState.step = 2;
-          flows.set(user.tgId.toString(), flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { title: sanitizedTitle });
+          FlowManager.updateStep(ctx.from.id.toString(), 2);
           
           return ctx.reply(
             `⏰ **Create Reminder (2/5)**\n\n` +
@@ -1277,7 +1244,7 @@ bot.on('text', async (ctx, next) => {
         // Step 2: Description
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Reminder creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1288,9 +1255,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Description must be at least 5 characters. Try again or type /cancel to exit:');
           }
           
-          flowState.data.description = sanitizedDescription;
-          flowState.step = 3;
-          flows.set(user.tgId.toString(), flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { description: sanitizedDescription });
+          FlowManager.updateStep(ctx.from.id.toString(), 3);
           
           const typeButtons = [
             [Markup.button.callback('👤 Personal', 'reminder_type|personal')],
@@ -1313,7 +1279,7 @@ bot.on('text', async (ctx, next) => {
         // Step 4: Date
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
-            flows.delete(ctx.from.id);
+            FlowManager.clearFlow(ctx.from.id.toString());
             return ctx.reply('❌ Reminder creation cancelled.', {
               reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
@@ -1339,9 +1305,8 @@ bot.on('text', async (ctx, next) => {
             return ctx.reply('⚠️ Date cannot be in the past. Try again or type /cancel to exit:');
           }
           
-          flowState.data.scheduledDate = scheduledDate;
-          flowState.step = 5;
-          flows.set(user.tgId.toString(), flowState);
+          FlowManager.updateData(ctx.from.id.toString(), { scheduledDate: scheduledDate });
+          FlowManager.updateStep(ctx.from.id.toString(), 5);
           
           const frequencyButtons = [
             [Markup.button.callback('🔄 Once', 'reminder_frequency|once')],
@@ -1367,7 +1332,7 @@ bot.on('text', async (ctx, next) => {
       }
     } catch (e) {
       console.error('FLOW_ERROR', e);
-      flows.delete(user.tgId.toString());
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ An error occurred. Please try again.');
     }
   } catch (error) {
@@ -1387,20 +1352,19 @@ bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
     
-    const flowState = flows.get(ctx.from.id);
+    const flowState = FlowManager.getFlow(ctx.from.id.toString());
     if (!flowState || flowState.flow !== 'wo_new') {
       return ctx.reply('⚠️ Invalid flow state. Please start over.');
     }
     
     // Validate flow ownership
-    if (flowState.userId !== ctx.from.id.toString()) {
-      flows.delete(ctx.from.id);
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
-    flowState.data.typeOfWork = ctx.match[1];
-    flowState.step = 2;
-    flows.set(ctx.from.id, flowState);
+    FlowManager.updateData(ctx.from.id.toString(), { typeOfWork: ctx.match[1] });
+    FlowManager.updateStep(ctx.from.id.toString(), 2);
     
     // Step 2: Choose service type
     const serviceTypeButtons = [
@@ -1426,20 +1390,19 @@ bot.action(/wo_service\|(electrical|mechanical|plumbing|hvac|structural|it|gener
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    const flowState = flows.get(ctx.from.id);
+    const flowState = FlowManager.getFlow(ctx.from.id.toString());
     if (!flowState || flowState.flow !== 'wo_new') {
       return ctx.reply('⚠️ Invalid flow state. Please start over.');
     }
     
     // Validate flow ownership
-    if (flowState.userId !== ctx.from.id.toString()) {
-      flows.delete(ctx.from.id);
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
-    flowState.data.typeOfService = ctx.match[1];
-    flowState.step = 3;
-    flows.set(ctx.from.id, flowState);
+    FlowManager.updateData(ctx.from.id.toString(), { typeOfService: ctx.match[1] });
+    FlowManager.updateStep(ctx.from.id.toString(), 3);
     
     // Step 3: Choose priority
     const priorityButtons = [
@@ -1461,20 +1424,19 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    const flowState = flows.get(ctx.from.id);
+    const flowState = FlowManager.getFlow(ctx.from.id.toString());
     if (!flowState || flowState.flow !== 'wo_new') {
       return ctx.reply('⚠️ Invalid flow state. Please start over.');
     }
     
     // Validate flow ownership
-    if (flowState.userId !== ctx.from.id.toString()) {
-      flows.delete(ctx.from.id);
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
-    flowState.data.priority = ctx.match[1];
-    flowState.step = 4;
-    flows.set(ctx.from.id, flowState);
+    FlowManager.updateData(ctx.from.id.toString(), { priority: ctx.match[1] });
+    FlowManager.updateStep(ctx.from.id.toString(), 4);
     
     await ctx.reply(
       `🔧 **Work Order Creation (4/6)**\n\n` +
@@ -1494,7 +1456,7 @@ bot.action('regfac_cancel', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
     const { user } = await authenticateUser(ctx);
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     await ctx.reply('❌ Facility registration cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
@@ -1509,7 +1471,7 @@ bot.action('user_reg_cancel', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
     const { user } = await authenticateUser(ctx);
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     await ctx.reply('❌ User registration cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
@@ -1525,7 +1487,7 @@ bot.action('wo_cancel', async (ctx) => {
   
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     await ctx.reply('❌ Work order creation cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
     });
@@ -1538,23 +1500,23 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const { user } = await authenticateUser(ctx);
     
-    const flowState = flows.get(user.tgId.toString());
+    const flowState = FlowManager.getFlow(user.tgId.toString());
     if (!flowState || flowState.flow !== 'reg_fac') {
       return ctx.reply('⚠️ Invalid registration flow. Please start over.');
     }
     
     // Validate flow ownership
-    if (flowState.userId !== user.tgId.toString()) {
-      flows.delete(user.tgId.toString());
+    if (!FlowManager.validateFlowOwnership(user.tgId.toString(), flowState)) {
+      FlowManager.clearFlow(user.tgId.toString());
       return ctx.reply('⚠️ Session expired. Please start over.');
     }
     
-    flowState.data.plan = ctx.match[1];
+    FlowManager.updateData(user.tgId.toString(), { plan: ctx.match[1] });
     const data = flowState.data;
     
     // Validate required fields
     if (!data.name || !data.city || !data.phone) {
-      flows.delete(ctx.from.id);
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ Missing required facility information. Please start over.');
     }
     
@@ -1564,7 +1526,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
     });
     
     if (existingFacility) {
-      flows.delete(ctx.from.id);
+      FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ A facility with this name already exists. Please choose a different name.');
     }
     
@@ -1603,7 +1565,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
       return f;
     });
     
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     
     await ctx.reply(
       `✅ **Facility Registration Successful!**\n\n` +
@@ -1646,7 +1608,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
     
   } catch (error) {
     console.error('Error in facility registration:', error);
-    flows.delete(ctx.from.id);
+    FlowManager.clearFlow(ctx.from.id.toString());
     
     if (error.code === 'P2002') {
       await ctx.reply('⚠️ A facility with this name already exists. Please choose a different name.');
@@ -3672,7 +3634,7 @@ bot.action('create_reminder', async (ctx) => {
       return ctx.reply('⚠️ Only facility admins and supervisors can create reminders.');
     }
     
-    flows.set(ctx.from.id, { flow: 'create_reminder', step: 1, data: {}, ts: Date.now() });
+    FlowManager.setFlow(ctx.from.id.toString(), 'create_reminder', 1, {});
     
     const reminderTypeButtons = [
       [Markup.button.callback('📋 Work Order Due', 'reminder_type|work_order_due')],
@@ -3694,12 +3656,11 @@ bot.action('create_reminder', async (ctx) => {
 // Handle reminder type selection
 bot.action(/reminder_type\|(work_order_due|periodic_check|maintenance_schedule|custom_reminder)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const flowState = flows.get(ctx.from.id);
+  const flowState = FlowManager.getFlow(ctx.from.id.toString());
   if (!flowState || flowState.flow !== 'create_reminder') return;
   
-  flowState.data.type = ctx.match[1];
-  flowState.step = 2;
-  flows.set(ctx.from.id, flowState);
+  FlowManager.updateData(ctx.from.id.toString(), { type: ctx.match[1] });
+  FlowManager.updateStep(ctx.from.id.toString(), 2);
   
   await ctx.reply(`⏰ **Create Reminder** (2/5)\nType: ${flowState.data.type}\n\nEnter the reminder title (max 100 chars):`);
 });
@@ -3707,11 +3668,11 @@ bot.action(/reminder_type\|(work_order_due|periodic_check|maintenance_schedule|c
 // Handle reminder frequency selection
 bot.action(/reminder_frequency\|(once|daily|weekly|monthly)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const flowState = flows.get(ctx.from.id);
+  const flowState = FlowManager.getFlow(ctx.from.id.toString());
   if (!flowState || flowState.flow !== 'create_reminder') return;
   
   const { user } = await requireActiveMembership(ctx);
-  flowState.data.frequency = ctx.match[1];
+  FlowManager.updateData(ctx.from.id.toString(), { frequency: ctx.match[1] });
   
   // Create the reminder
   await createReminder(
@@ -3724,7 +3685,7 @@ bot.action(/reminder_frequency\|(once|daily|weekly|monthly)/, async (ctx) => {
     flowState.data.frequency
   );
   
-  flows.delete(ctx.from.id);
+  FlowManager.clearFlow(ctx.from.id.toString());
   
   const frequencyText = {
     'once': 'Once',
@@ -5430,12 +5391,7 @@ bot.action('register_user', async (ctx) => {
     }
     
     // Start registration flow
-    flows.set(ctx.from.id, { 
-      flow: 'register_user', 
-      step: 1, 
-      data: { role: 'user' }, 
-      ts: Date.now() 
-    });
+    FlowManager.setFlow(ctx.from.id.toString(), 'register_user', 1, { role: 'user' });
     
     await ctx.reply(
       '👤 **User Registration**\n\n' +
@@ -5473,12 +5429,7 @@ bot.action('register_technician', async (ctx) => {
     }
     
     // Start registration flow
-    flows.set(ctx.from.id, { 
-      flow: 'register_technician', 
-      step: 1, 
-      data: { role: 'technician' }, 
-      ts: Date.now() 
-    });
+    FlowManager.setFlow(ctx.from.id.toString(), 'register_technician', 1, { role: 'technician' });
     
     await ctx.reply(
       '🔧 **Technician Registration**\n\n' +
@@ -5517,12 +5468,7 @@ bot.action('register_supervisor', async (ctx) => {
     }
     
     // Start registration flow
-    flows.set(ctx.from.id, { 
-      flow: 'register_supervisor', 
-      step: 1, 
-      data: { role: 'supervisor' }, 
-      ts: Date.now() 
-    });
+    FlowManager.setFlow(ctx.from.id.toString(), 'register_supervisor', 1, { role: 'supervisor' });
     
     await ctx.reply(
       '👨‍💼 **Supervisor Registration**\n\n' +
