@@ -18,6 +18,13 @@ module.exports = async (req, res) => {
     return;
   }
 
+  // Log incoming update for debugging
+  console.log('update-in', { 
+    id: req.body?.update_id, 
+    type: Object.keys(req.body || {}).filter(k => k !== 'update_id')[0] || 'unknown',
+    from: req.body?.message?.from?.id || req.body?.callback_query?.from?.id
+  });
+
   // IMPORTANT: Return 200 immediately to avoid timeout
   res.status(200).end();
 
@@ -26,7 +33,6 @@ module.exports = async (req, res) => {
     const bot = getBot();
     await bot.handleUpdate(update);
   } catch (e) {
-    // Optional: log error to your logging service
     console.error('Webhook error:', e);
   }
 };
