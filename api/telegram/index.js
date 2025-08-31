@@ -277,7 +277,13 @@ async function showMainMenu(ctx) {
 bot.command('registerfacility', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     const { user } = await SecurityManager.authenticateUser(ctx);
-    FlowManager.setFlow(user.tgId.toString(), 'reg_fac', 1, {});
+    flows.set(user.tgId.toString(), { 
+      flow: 'reg_fac', 
+      step: 1, 
+      data: {}, 
+      userId: user.tgId.toString(),
+      timestamp: Date.now() 
+    });
     await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
   }, ctx, 'registerfacility_command');
 });
@@ -419,7 +425,13 @@ bot.action('reg_fac_start', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    FlowManager.setFlow(ctx.from.id, 'reg_fac', 1, {});
+    flows.set(ctx.from.id, { 
+      flow: 'reg_fac', 
+      step: 1, 
+      data: {}, 
+      userId: ctx.from.id.toString(),
+      timestamp: Date.now() 
+    });
     await ctx.reply('🏢 Facility Registration (1/4)\nPlease enter the facility name (max 60 chars):');
   }, ctx, 'reg_fac_start');
 });
@@ -702,7 +714,15 @@ bot.action('wo_new', async (ctx) => {
   
   return ErrorHandler.safeExecute(async () => {
     const { user } = await requireActiveMembership(ctx);
-    FlowManager.setFlow(ctx.from.id, 'wo_new', 1, {});
+    
+    // Create flow state
+    flows.set(ctx.from.id, { 
+      flow: 'wo_new', 
+      step: 1, 
+      data: {}, 
+      userId: ctx.from.id.toString(),
+      timestamp: Date.now() 
+    });
     
     // Step 1: Choose work type
     const workTypeButtons = [
