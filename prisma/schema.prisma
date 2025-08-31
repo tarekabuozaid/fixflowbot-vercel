@@ -67,7 +67,7 @@ model WorkOrder {
   id              BigInt          @id @default(autoincrement())
   facilityId      BigInt
   createdByUserId BigInt?
-  status          WorkOrderStatus @default(open)
+  status          WorkOrderStatus @default(pending)
   typeOfWork      String?
   typeOfService   String?
   priority        String?
@@ -182,6 +182,7 @@ enum UserStatus {
 }
 
 enum WorkOrderStatus {
+  pending
   open
   in_progress
   done
