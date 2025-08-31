@@ -469,7 +469,7 @@ async function requireMembershipOrList(ctx) {
 bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
     const facilityId = BigInt(ctx.match[1]);
     const role = ctx.match[2];
@@ -524,7 +524,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
     
     // Check plan limits before creating membership
     try {
-      await checkPlanLimit(facilityId, 'members', 1);
+      await PlanManager.checkPlanLimit(facilityId, 'members', 1);
     } catch (error) {
       FlowManager.clearFlow(user.tgId.toString());
       return ctx.reply(`⚠️ **Plan Limit Exceeded**\n\n${error.message}\n\nPlease contact the facility administrator to upgrade the plan.`);
@@ -614,7 +614,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
 bot.action(/join_fac\|(\d+)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
     // Check if user is already registered
     const existingMembership = await prisma.facilityMember.findFirst({
@@ -821,7 +821,7 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedName = sanitizeInput(text, 60);
+          const sanitizedName = SecurityManager.sanitizeInput(text, 60);
           if (sanitizedName.length < 2) {
             return ctx.reply('⚠️ Name must be at least 2 characters. Try again or type /cancel to exit:');
           }
@@ -856,7 +856,7 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedCity = sanitizeInput(text, 40);
+          const sanitizedCity = SecurityManager.sanitizeInput(text, 40);
           if (sanitizedCity.length < 2) {
             return ctx.reply('⚠️ City must be at least 2 characters. Try again or type /cancel to exit:');
           }
@@ -883,7 +883,7 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedPhone = sanitizeInput(text, 25);
+          const sanitizedPhone = SecurityManager.sanitizeInput(text, 25);
           if (sanitizedPhone.length < 5) {
             return ctx.reply('⚠️ Phone must be at least 5 characters. Try again or type /cancel to exit:');
           }
@@ -932,7 +932,7 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedName = sanitizeInput(text, 50);
+          const sanitizedName = SecurityManager.sanitizeInput(text, 50);
           if (sanitizedName.length < 2) {
             return ctx.reply('⚠️ Name must be at least 2 characters. Try again or type /cancel to exit:');
           }
@@ -967,7 +967,7 @@ bot.on('text', async (ctx, next) => {
           if (text.toLowerCase() === '/skip') {
             FlowManager.updateData(ctx.from.id.toString(), { email: null });
           } else {
-            const sanitizedEmail = sanitizeInput(text, 100);
+            const sanitizedEmail = SecurityManager.sanitizeInput(text, 100);
             const validatedEmail = validateEmail(sanitizedEmail);
             if (validatedEmail) {
               FlowManager.updateData(ctx.from.id.toString(), { email: validatedEmail });
@@ -1000,7 +1000,7 @@ bot.on('text', async (ctx, next) => {
           if (text.toLowerCase() === '/skip') {
             FlowManager.updateData(ctx.from.id.toString(), { phone: null });
           } else {
-            const sanitizedPhone = sanitizeInput(text, 20);
+            const sanitizedPhone = SecurityManager.sanitizeInput(text, 20);
             const validatedPhone = validatePhone(sanitizedPhone);
             if (validatedPhone) {
               FlowManager.updateData(ctx.from.id.toString(), { phone: validatedPhone });
@@ -1035,7 +1035,7 @@ bot.on('text', async (ctx, next) => {
           if (text.toLowerCase() === '/skip') {
             FlowManager.updateData(ctx.from.id.toString(), { jobTitle: null });
           } else {
-            const sanitizedJobTitle = sanitizeInput(text, 50);
+            const sanitizedJobTitle = SecurityManager.sanitizeInput(text, 50);
             if (sanitizedJobTitle.length < 2) {
               return ctx.reply('⚠️ Job title must be at least 2 characters. Try again or type /skip to skip:');
             }
@@ -1058,7 +1058,7 @@ bot.on('text', async (ctx, next) => {
           }
           
           const buttons = facilities.map(f => [
-            { text: sanitizeInput(f.name, 30), callback_data: `join_facility|${f.id.toString()}|${flowState.flow.replace('register_', '')}` }
+            { text: SecurityManager.sanitizeInput(f.name, 30), callback_data: `join_facility|${f.id.toString()}|${flowState.flow.replace('register_', '')}` }
           ]);
           buttons.push([{ text: '❌ Cancel', callback_data: 'user_reg_cancel' }]);
           
@@ -1223,7 +1223,7 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedTitle = sanitizeInput(text, 100);
+          const sanitizedTitle = SecurityManager.sanitizeInput(text, 100);
           if (sanitizedTitle.length < 3) {
             return ctx.reply('⚠️ Title must be at least 3 characters. Try again or type /cancel to exit:');
           }
@@ -1250,7 +1250,7 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedDescription = sanitizeInput(text, 200);
+          const sanitizedDescription = SecurityManager.sanitizeInput(text, 200);
           if (sanitizedDescription.length < 5) {
             return ctx.reply('⚠️ Description must be at least 5 characters. Try again or type /cancel to exit:');
           }
@@ -1455,7 +1455,7 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
 bot.action('regfac_cancel', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     FlowManager.clearFlow(ctx.from.id.toString());
     await ctx.reply('❌ Facility registration cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
@@ -1470,7 +1470,7 @@ bot.action('regfac_cancel', async (ctx) => {
 bot.action('user_reg_cancel', async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     FlowManager.clearFlow(ctx.from.id.toString());
     await ctx.reply('❌ User registration cancelled.', {
       reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
@@ -1498,7 +1498,7 @@ bot.action('wo_cancel', async (ctx) => {
 bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const { user } = await authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
     
     const flowState = FlowManager.getFlow(user.tgId.toString());
     if (!flowState || flowState.flow !== 'reg_fac') {
@@ -1530,7 +1530,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
       return ctx.reply('⚠️ A facility with this name already exists. Please choose a different name.');
     }
     
-    console.log('Creating facility with data:', data);
+    // Creating facility with data
     
     const facility = await prisma.$transaction(async (tx) => {
       const f = await tx.facility.create({
