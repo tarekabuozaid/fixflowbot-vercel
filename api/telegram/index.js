@@ -1,49 +1,47 @@
 'use strict';
-
 const { getBot } = require('../../lib/telegram/bot');
 
-// Load environment variables from .env if present
-if (process.env.NODE_ENV !== 'production') {
-  try {
-    require('dotenv').config();
-  } catch (_) {
-    // dotenv is optional; ignore if not installed
-  }
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (c) => (data += c));
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}); }
+      catch (e) { reject(e); }
+    });
+    req.on('error', reject);
+  });
 }
 
 module.exports = async (req, res) => {
+  // اختبارات سريعة بالمتصفح
+  if (req.method === 'GET') {
+    const hasToken = !!(process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN);
+    return res.status(200).json({ ok: true, webhook: 'telegram', hasToken });
+  }
+
+  if (req.method !== 'POST') return res.status(200).send('OK');
+
   try {
-    // Telegram sends POST only
-    if (req.method !== 'POST') {
-      res.status(200).send('OK');
-      return;
-    }
+    // اقرأ البودي أولاً
+    const update = req.body && Object.keys(req.body).length
+      ? req.body
+      : await readJson(req);
 
-    // Log incoming update for debugging
-    console.log('update-in', { 
-      id: req.body?.update_id, 
-      type: Object.keys(req.body || {}).filter(k => k !== 'update_id')[0] || 'unknown',
-      from: req.body?.message?.from?.id || req.body?.callback_query?.from?.id
-    });
-
-    // IMPORTANT: Return 200 immediately to avoid timeout
+    // ارجع 200 بسرعة لتيليجرام
     res.status(200).end();
 
-    const update = req.body;
-    
-    // Check if BOT_TOKEN is available
-    if (!process.env.BOT_TOKEN) {
-      console.error('BOT_TOKEN not found in environment variables');
+    // تحقّق من التوكن قبل تهيئة البوت/المعالجة
+    const token = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
+    if (!token) {
+      console.error('Missing TELEGRAM_BOT_TOKEN/BOT_TOKEN');
       return;
     }
-    
-    const bot = getBot();
-    await bot.handleUpdate(update);
+
+    const bot = getBot();            // تهيئة كسولة + Singleton
+    await bot.handleUpdate(update);  // بدون bot.launch()
   } catch (e) {
-    console.error('Webhook error:', e);
-    // Still return 200 to avoid Telegram retries
-    if (!res.headersSent) {
-      res.status(200).end();
-    }
+    console.error('webhook-error', e);
+    // الرد انتهى بالفعل؛ فقط سجّل الخطأ
   }
 };
