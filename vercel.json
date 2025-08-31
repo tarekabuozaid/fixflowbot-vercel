@@ -4,7 +4,7 @@
     { "source": "/api/health", "destination": "/api/health/index.js" }
   ],
   "crons": [
-    { "path": "/api/cron/reminders?key=@cron_secret", "schedule": "*/1 * * * *" }
+    { "path": "/api/cron/reminders?key=ce7306e34e546e96f122643979652166a0d681e7ee2a084cdf1d0d71d5c93a40", "schedule": "*/1 * * * *" }
   ],
   "functions": {
     "api/telegram/index.js": { "maxDuration": 15 },
