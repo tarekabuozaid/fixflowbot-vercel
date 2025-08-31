@@ -3,9 +3,12 @@
     { "source": "/api/telegram/(.*)", "destination": "/api/telegram/index.js" },
     { "source": "/api/health", "destination": "/api/health/index.js" }
   ],
+  "crons": [
+    { "path": "/api/cron/reminders?key=@cron_secret", "schedule": "*/1 * * * *" }
+  ],
   "functions": {
-    "api/telegram/index.js": {
-      "maxDuration": 30
-    }
+    "api/telegram/index.js": { "maxDuration": 15 },
+    "api/cron/reminders.js": { "maxDuration": 15 },
+    "api/health/index.js": { "maxDuration": 10 }
   }
 }
