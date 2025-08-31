@@ -341,7 +341,7 @@ node scripts/update-commands.js
 node scripts/update-actions.js
 
 # اختبار الوحدات الجديدة
-node api/telegram/test-modules.js
+node scripts/test-modules.js
 ```
 
 ### **2. سكريبت التحقق من التوافق**

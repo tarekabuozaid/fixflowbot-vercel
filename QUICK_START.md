@@ -131,7 +131,7 @@ echo $BOT_TOKEN
 npx prisma db pull
 
 # تشغيل اختبارات الوحدات
-node api/telegram/test-modules.js
+node scripts/test-modules.js
 ```
 
 #### خطأ في قاعدة البيانات
@@ -200,7 +200,7 @@ npm run test
 
 ### للمطورين
 1. اقرأ `MODULES.md` لفهم البنية الوحداتية
-2. استخدم `node api/telegram/test-modules.js` لاختبار الوحدات
+2. استخدم `node scripts/test-modules.js` لاختبار الوحدات
 3. اتبع معايير الكود في `README.md`
 4. أضف اختبارات للميزات الجديدة
 

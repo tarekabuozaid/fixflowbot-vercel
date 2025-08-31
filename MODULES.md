@@ -430,7 +430,7 @@ bot.action('facility_dashboard', async (ctx) => {
 
 ### تشغيل اختبارات الوحدات
 ```bash
-node api/telegram/test-modules.js
+node scripts/test-modules.js
 ```
 
 ### اختبار SecurityManager

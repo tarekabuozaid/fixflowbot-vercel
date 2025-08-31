@@ -3,10 +3,10 @@
  * This file demonstrates how to use the new modules
  */
 
-const SecurityManager = require('./utils/security');
-const FlowManager = require('./utils/flowManager');
-const PlanManager = require('./utils/planManager');
-const ErrorHandler = require('./utils/errorHandler');
+const SecurityManager = require('../api/telegram/utils/security');
+const FlowManager = require('../api/telegram/utils/flowManager');
+const PlanManager = require('../api/telegram/utils/planManager');
+const ErrorHandler = require('../api/telegram/utils/errorHandler');
 
 // Mock Telegram context for testing
 const mockCtx = {
