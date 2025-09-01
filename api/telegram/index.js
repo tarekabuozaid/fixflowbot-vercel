@@ -51,7 +51,10 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN, {
+  telegram: { webhookReply: false },
+  handlerTimeout: 9000
+});
 const prisma = new PrismaClient({
   datasources: {
     db: {
@@ -1402,6 +1405,188 @@ bot.on('text', async (ctx, next) => {
         }
       }
       
+      // === CREATE REMINDER FLOW ===
+      if (flowState.flow === 'create_reminder') {
+        // Step 2: Title
+        if (flowState.step === 2) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ Reminder creation cancelled.', {
+              reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+            });
+          }
+
+          const sanitizedTitle = SecurityManager.sanitizeInput(text, 100);
+          if (sanitizedTitle.length < 3) {
+            return ctx.reply('⚠️ Title must be at least 3 characters. Try again or type /cancel to exit:');
+          }
+
+          FlowManager.updateData(ctx.from.id.toString(), { title: sanitizedTitle });
+          FlowManager.updateStep(ctx.from.id.toString(), 3);
+
+          return ctx.reply(
+            `⏰ **Create Reminder (3/5)**\n\n` +
+            `✅ **Title:** ${sanitizedTitle}\n\n` +
+            `📝 **Enter description**\n` +
+            `Maximum 200 characters\n\n` +
+            `Type /cancel to exit`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        // Step 3: Description
+        if (flowState.step === 3) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ Reminder creation cancelled.', {
+              reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+            });
+          }
+
+          const sanitizedDescription = SecurityManager.sanitizeInput(text, 200);
+          if (sanitizedDescription.length < 5) {
+            return ctx.reply('⚠️ Description must be at least 5 characters. Try again or type /cancel to exit:');
+          }
+
+          FlowManager.updateData(ctx.from.id.toString(), { message: sanitizedDescription });
+          FlowManager.updateStep(ctx.from.id.toString(), 4);
+
+          return ctx.reply(
+            `⏰ **Create Reminder (4/5)**\n\n` +
+            `✅ **Title:** ${flowState.data.title}\n` +
+            `✅ **Description:** ${sanitizedDescription}\n\n` +
+            `📅 **Enter date (DD/MM/YYYY or DD-MM-YYYY)**\n` +
+            `Type /cancel to exit`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        // Step 4: Date
+        if (flowState.step === 4) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ Reminder creation cancelled.', {
+              reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
+            });
+          }
+
+          // Simple date validation (DD/MM/YYYY or DD-MM-YYYY)
+          const dateRegex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/;
+          const match = text.match(dateRegex);
+
+          if (!match) {
+            return ctx.reply('⚠️ Please enter date in DD/MM/YYYY or DD-MM-YYYY format. Try again or type /cancel to exit:');
+          }
+
+          const day = parseInt(match[1]);
+          const month = parseInt(match[2]);
+          const year = parseInt(match[3]);
+
+          const scheduledDate = new Date(year, month - 1, day);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          if (scheduledDate < today) {
+            return ctx.reply('⚠️ Date cannot be in the past. Try again or type /cancel to exit:');
+          }
+
+          FlowManager.updateData(ctx.from.id.toString(), { scheduledFor: scheduledDate });
+          FlowManager.updateStep(ctx.from.id.toString(), 5);
+
+          const frequencyButtons = [
+            [Markup.button.callback('🔄 Once', 'reminder_frequency|once')],
+            [Markup.button.callback('📅 Daily', 'reminder_frequency|daily')],
+            [Markup.button.callback('📅 Weekly', 'reminder_frequency|weekly')],
+            [Markup.button.callback('📅 Monthly', 'reminder_frequency|monthly')],
+            [Markup.button.callback('❌ Cancel', 'reminder_cancel')]
+          ];
+
+          return ctx.reply(
+            `⏰ **Create Reminder (5/5)**\n\n` +
+            `✅ **Title:** ${flowState.data.title}\n` +
+            `✅ **Description:** ${flowState.data.message}\n` +
+            `✅ **Type:** ${flowState.data.type}\n` +
+            `✅ **Date:** ${scheduledDate.toLocaleDateString()}\n\n` +
+            `🔄 **Choose frequency:**`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: frequencyButtons }
+            }
+          );
+        }
+      }
+
+      // === WORK ORDER SEARCH FLOW ===
+      if (flowState.flow === 'wo_search') {
+        if (flowState.step === 1) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ تم إلغاء البحث.', {
+              reply_markup: { inline_keyboard: [[{ text: '🏠 القائمة الرئيسية', callback_data: 'back_to_menu' }]] }
+            });
+          }
+
+          const { user, member } = await requireActiveMembership(ctx);
+          if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('⚠️ لا تملك صلاحية البحث في البلاغات.');
+          }
+
+          // Support search by #ID
+          const idMatch = text.trim().match(/^#?(\d+)$/);
+          let whereClause = { facilityId: user.activeFacilityId };
+
+          if (idMatch) {
+            whereClause.id = BigInt(idMatch[1]);
+          } else {
+            const q = text.toLowerCase();
+            whereClause.OR = [
+              { description: { contains: q, mode: 'insensitive' } },
+              { location: { contains: q, mode: 'insensitive' } },
+              { equipment: { contains: q, mode: 'insensitive' } },
+              { typeOfWork: { contains: q, mode: 'insensitive' } },
+              { typeOfService: { contains: q, mode: 'insensitive' } }
+            ];
+          }
+
+          const results = await prisma.workOrder.findMany({
+            where: whereClause,
+            orderBy: { updatedAt: 'desc' },
+            take: 15
+          });
+
+          FlowManager.clearFlow(ctx.from.id.toString());
+
+          if (!results.length) {
+            return ctx.reply('🔎 لم يتم العثور على نتائج مطابقة.');
+          }
+
+          const statusEmoji = {
+            'open': '🔵',
+            'in_progress': '🟡',
+            'done': '🟢',
+            'closed': '⚫'
+          };
+
+          const rows = results.map(wo => [
+            Markup.button.callback(
+              `${statusEmoji[wo.status] || '⚪'} #${wo.id.toString()} ${wo.typeOfWork ? '[' + wo.typeOfWork + '] ' : ''}\n${wo.description.slice(0, 45)}${wo.description.length > 45 ? '...' : ''}`,
+              `wo_view|${wo.id.toString()}`
+            )
+          ]);
+
+          const buttons = [
+            ...rows,
+            [Markup.button.callback('🔙 الرجوع للإدارة', 'manage_work_orders')]
+          ];
+
+          return ctx.reply('🔎 **نتائج البحث عن البلاغات**\n\nاختر بلاغاً لعرض التفاصيل:', {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons }
+          });
+        }
+      }
+
       // === REMINDER CREATION FLOW ===
       if (flowState.flow === 'reminder_new') {
         // Step 1: Title
@@ -1775,22 +1960,34 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
       }
     );
     
-    // Notify master
+    // Notify master (respect settings if master is a regular user with settings)
     if (MASTER_ID) {
       try {
-        await bot.telegram.sendMessage(
-          MASTER_ID,
-          `🏢 **New Facility Request**\n\n` +
-          `📝 **Details:**\n` +
-          `• Name: ${facility.name}\n` +
-          `• City: ${data.city}\n` +
-          `• Phone: ${data.phone}\n` +
-          `• Plan: ${data.plan}\n` +
-          `• ID: ${facility.id.toString()}\n` +
-          `• Owner: ${ctx.from.id}\n\n` +
-          `Use Master Panel to approve.`,
-          { parse_mode: 'Markdown' }
-        );
+        // Check if master has notification settings (optional, masters usually want all notifications)
+        let shouldNotifyMaster = true;
+        try {
+          const masterSettings = await getUserNotificationSettings(MASTER_ID);
+          shouldNotifyMaster = masterSettings.statusChanges; // Facility requests are status changes
+        } catch (e) {
+          // If no settings found, assume master wants all notifications
+          shouldNotifyMaster = true;
+        }
+        
+        if (shouldNotifyMaster) {
+          await bot.telegram.sendMessage(
+            MASTER_ID,
+            `🏢 **New Facility Request**\n\n` +
+            `📝 **Details:**\n` +
+            `• Name: ${facility.name}\n` +
+            `• City: ${data.city}\n` +
+            `• Phone: ${data.phone}\n` +
+            `• Plan: ${data.plan}\n` +
+            `• ID: ${facility.id.toString()}\n` +
+            `• Owner: ${ctx.from.id}\n\n` +
+            `Use Master Panel to approve.`,
+            { parse_mode: 'Markdown' }
+          );
+        }
       } catch (err) {
         console.error('Failed to notify master:', err);
       }
@@ -2906,6 +3103,48 @@ bot.action('facility_settings', async (ctx) => {
 });
 
 // === Notification System ===
+
+// Load user notification settings (from latest system_alert with title user_notification_settings)
+async function getUserNotificationSettings(userId) {
+  const settingsKey = 'user_notification_settings';
+  const defaults = {
+    workOrderUpdates: true,
+    statusChanges: true,
+    highPriorityAlerts: true,
+    dailySummaries: true,
+    weeklyReports: true
+  };
+  try {
+    const existing = await prisma.notification.findFirst({
+      where: { userId: BigInt(userId), type: 'system_alert', title: settingsKey },
+      orderBy: { createdAt: 'desc' }
+    });
+    return existing?.data ? { ...defaults, ...existing.data } : defaults;
+  } catch (e) {
+    return defaults;
+  }
+}
+
+// Check if a notification type is enabled based on settings
+function isNotificationEnabledForType(settings, type) {
+  const map = {
+    work_order_created: 'workOrderUpdates',
+    work_order_assigned: 'workOrderUpdates',
+    work_order_status_changed: 'statusChanges',
+    high_priority_alert: 'highPriorityAlerts',
+    daily_summary: 'dailySummaries',
+    weekly_report: 'weeklyReports',
+    system_alert: true,
+    new_member_request: 'statusChanges',
+    membership_approved: 'statusChanges',
+    role_changed: 'statusChanges'
+  };
+
+  const key = map[type];
+  if (key === true) return true;
+  if (!key) return true; // default allow if unmapped
+  return Boolean(settings[key]);
+}
 /**
  * إنشاء إشعار جديد
  * @param {BigInt|string} userId - معرف المستخدم
@@ -2937,6 +3176,7 @@ bot.action('facility_settings', async (ctx) => {
  */
 async function createNotification(userId, facilityId, type, title, message, data = null) {
   try {
+    // Always persist notification for audit/history
     await prisma.notification.create({
       data: {
         userId: BigInt(userId),
@@ -2947,6 +3187,16 @@ async function createNotification(userId, facilityId, type, title, message, data
         data: data ? JSON.parse(JSON.stringify(data)) : null
       }
     });
+
+    // Respect user notification settings for sending via Telegram
+    const settings = await getUserNotificationSettings(userId);
+    if (isNotificationEnabledForType(settings, type)) {
+      try {
+        await sendTelegramNotification(userId, title, message, null);
+      } catch (sendErr) {
+        console.error('Error sending Telegram notification:', sendErr);
+      }
+    }
   } catch (error) {
     console.error('Error creating notification:', error);
   }
@@ -2958,25 +3208,39 @@ async function createNotification(userId, facilityId, type, title, message, data
  * @param {string} title - عنوان الإشعار
  * @param {string} message - رسالة الإشعار
  * @param {Array} buttons - أزرار تفاعلية (اختياري)
+ * @param {string} notificationType - نوع الإشعار للتحقق من الإعدادات (اختياري)
  * 
  * هذه الدالة ترسل إشعار مباشر للمستخدم عبر تيليجرام
  * 
  * ملاحظات:
  * - يتم البحث عن المستخدم في قاعدة البيانات
  * - يتم التحقق من وجود معرف تيليجرام
+ * - يتم التحقق من إعدادات الإشعارات (إن تم تمرير نوع الإشعار)
  * - يتم إرسال الرسالة مع الأزرار التفاعلية (إن وجدت)
  * - يتم معالجة الأخطاء بشكل آمن
  */
-async function sendTelegramNotification(userId, title, message, buttons = null) {
+async function sendTelegramNotification(userId, title, message, buttons = null, notificationType = null) {
   try {
     const user = await prisma.user.findUnique({
       where: { id: BigInt(userId) }
     });
     
-    if (user?.tgId) {
-      const options = buttons ? { reply_markup: { inline_keyboard: buttons } } : {};
-      await bot.telegram.sendMessage(user.tgId.toString(), `${title}\n\n${message}`, options);
+    if (!user?.tgId) {
+      console.log(`User ${userId} not found or no Telegram ID`);
+      return;
     }
+    
+    // Check notification settings if type is provided
+    if (notificationType) {
+      const settings = await getUserNotificationSettings(userId);
+      if (!isNotificationEnabledForType(settings, notificationType)) {
+        console.log(`Notification type ${notificationType} disabled for user ${userId}`);
+        return;
+      }
+    }
+    
+    const options = buttons ? { reply_markup: { inline_keyboard: buttons } } : {};
+    await bot.telegram.sendMessage(user.tgId.toString(), `${title}\n\n${message}`, options);
   } catch (error) {
     console.error('Error sending Telegram notification:', error);
   }
@@ -3650,28 +3914,128 @@ bot.action('notification_settings', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
     const { user } = await requireActiveMembership(ctx);
-    
-    const settingsMessage = 
+
+    // Load current settings from a synthetic system notification (or defaults)
+    const settingsKey = 'user_notification_settings';
+    const existing = await prisma.notification.findFirst({
+      where: { userId: user.id, type: 'system_alert', title: settingsKey },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const defaults = {
+      workOrderUpdates: true,
+      statusChanges: true,
+      highPriorityAlerts: true,
+      dailySummaries: true,
+      weeklyReports: true
+    };
+
+    const settings = existing?.data ? { ...defaults, ...existing.data } : defaults;
+
+    const toEmoji = (v) => (v ? '✅' : '❌');
+
+    const settingsMessage =
       `⚙️ **Notification Settings**\n\n` +
-      `🔔 **Current Settings:**\n` +
-      `✅ Work Order Updates\n` +
-      `✅ Status Changes\n` +
-      `✅ High Priority Alerts\n` +
-      `✅ Daily Summaries\n` +
-      `✅ Weekly Reports\n\n` +
-      `Settings customization coming soon...`;
-    
+      `${toEmoji(settings.workOrderUpdates)} Work Order Updates\n` +
+      `${toEmoji(settings.statusChanges)} Status Changes\n` +
+      `${toEmoji(settings.highPriorityAlerts)} High Priority Alerts\n` +
+      `${toEmoji(settings.dailySummaries)} Daily Summaries\n` +
+      `${toEmoji(settings.weeklyReports)} Weekly Reports`;
+
     const buttons = [
+      [
+        Markup.button.callback(`${toEmoji(settings.workOrderUpdates)} Work Orders`, 'notif_toggle|workOrderUpdates'),
+        Markup.button.callback(`${toEmoji(settings.statusChanges)} Status`, 'notif_toggle|statusChanges')
+      ],
+      [
+        Markup.button.callback(`${toEmoji(settings.highPriorityAlerts)} High Priority`, 'notif_toggle|highPriorityAlerts')
+      ],
+      [
+        Markup.button.callback(`${toEmoji(settings.dailySummaries)} Daily`, 'notif_toggle|dailySummaries'),
+        Markup.button.callback(`${toEmoji(settings.weeklyReports)} Weekly`, 'notif_toggle|weeklyReports')
+      ],
       [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
       [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
     ];
-    
+
     await ctx.reply(settingsMessage, {
+      parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
     console.error('Error accessing notification settings:', error);
     await ctx.reply('⚠️ An error occurred while accessing settings.');
+  }
+});
+
+// Toggle notification settings
+bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dailySummaries|weeklyReports)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    const key = ctx.match[1];
+
+    const settingsKey = 'user_notification_settings';
+    const existing = await prisma.notification.findFirst({
+      where: { userId: user.id, type: 'system_alert', title: settingsKey },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const defaults = {
+      workOrderUpdates: true,
+      statusChanges: true,
+      highPriorityAlerts: true,
+      dailySummaries: true,
+      weeklyReports: true
+    };
+    const current = existing?.data ? { ...defaults, ...existing.data } : defaults;
+    const updated = { ...current, [key]: !current[key] };
+
+    // Persist as a new system_alert record (immutable audit-friendly)
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        facilityId: user.activeFacilityId,
+        type: 'system_alert',
+        title: settingsKey,
+        message: `Updated ${key} to ${updated[key] ? 'on' : 'off'}`,
+        data: updated
+      }
+    });
+
+    const toEmoji = (v) => (v ? '✅' : '❌');
+
+    const settingsMessage =
+      `⚙️ **Notification Settings**\n\n` +
+      `${toEmoji(updated.workOrderUpdates)} Work Order Updates\n` +
+      `${toEmoji(updated.statusChanges)} Status Changes\n` +
+      `${toEmoji(updated.highPriorityAlerts)} High Priority Alerts\n` +
+      `${toEmoji(updated.dailySummaries)} Daily Summaries\n` +
+      `${toEmoji(updated.weeklyReports)} Weekly Reports`;
+
+    const buttons = [
+      [
+        Markup.button.callback(`${toEmoji(updated.workOrderUpdates)} Work Orders`, 'notif_toggle|workOrderUpdates'),
+        Markup.button.callback(`${toEmoji(updated.statusChanges)} Status`, 'notif_toggle|statusChanges')
+      ],
+      [
+        Markup.button.callback(`${toEmoji(updated.highPriorityAlerts)} High Priority`, 'notif_toggle|highPriorityAlerts')
+      ],
+      [
+        Markup.button.callback(`${toEmoji(updated.dailySummaries)} Daily`, 'notif_toggle|dailySummaries'),
+        Markup.button.callback(`${toEmoji(updated.weeklyReports)} Weekly`, 'notif_toggle|weeklyReports')
+      ],
+      [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
+      [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+    ];
+
+    await ctx.reply(settingsMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error toggling notification setting:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء تعديل إعدادات الإشعارات.');
   }
 });
 
@@ -3752,6 +4116,15 @@ async function sendReminderToFacility(facilityId, title, message, buttons = null
     for (const member of members) {
       if (member.user.tgId) {
         try {
+          // Check user notification settings for reminders/daily summaries
+          const settings = await getUserNotificationSettings(member.userId);
+          const shouldSend = settings.dailySummaries || settings.weeklyReports; // Assume reminders fall under these
+          
+          if (!shouldSend) {
+            console.log(`Skipping reminder for user ${member.userId} due to notification settings`);
+            continue;
+          }
+          
           const options = buttons ? { reply_markup: { inline_keyboard: buttons } } : {};
           await bot.telegram.sendMessage(member.user.tgId.toString(), `${title}\n\n${message}`, options);
         } catch (error) {
@@ -5597,6 +5970,208 @@ bot.action('wo_manage_all', async (ctx) => {
   } catch (error) {
     console.error('Error loading all work orders:', error);
     await ctx.reply('⚠️ An error occurred while loading work orders.');
+  }
+});
+
+// Manage Open Work Orders
+bot.action('wo_manage_open', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) {
+      return ctx.reply('⚠️ Access denied.');
+    }
+
+    const workOrders = await prisma.workOrder.findMany({
+      where: { facilityId: user.activeFacilityId, status: 'open' },
+      include: { byUser: true },
+      orderBy: { createdAt: 'desc' },
+      take: 15
+    });
+
+    if (!workOrders.length) {
+      return ctx.reply('🔵 No open work orders.');
+    }
+
+    const rows = workOrders.map(wo => [
+      Markup.button.callback(
+        `🔵 #${wo.id.toString()} • ${wo.byUser?.firstName || 'User'}\n${wo.description.slice(0, 40)}${wo.description.length > 40 ? '...' : ''}`,
+        `wo_view|${wo.id.toString()}`
+      )
+    ]);
+
+    const buttons = [
+      ...rows,
+      [Markup.button.callback('🔙 Back to Management', 'manage_work_orders')]
+    ];
+
+    await ctx.reply('🔵 **Open Work Orders**\n\nSelect an order to view details:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error loading open work orders:', error);
+    await ctx.reply('⚠️ An error occurred while loading open work orders.');
+  }
+});
+
+// Manage In-Progress Work Orders
+bot.action('wo_manage_in_progress', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) {
+      return ctx.reply('⚠️ Access denied.');
+    }
+
+    const workOrders = await prisma.workOrder.findMany({
+      where: { facilityId: user.activeFacilityId, status: 'in_progress' },
+      include: { byUser: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 15
+    });
+
+    if (!workOrders.length) {
+      return ctx.reply('🟡 No in-progress work orders.');
+    }
+
+    const rows = workOrders.map(wo => [
+      Markup.button.callback(
+        `🟡 #${wo.id.toString()} • ${wo.byUser?.firstName || 'User'}\n${wo.description.slice(0, 40)}${wo.description.length > 40 ? '...' : ''}`,
+        `wo_view|${wo.id.toString()}`
+      )
+    ]);
+
+    const buttons = [
+      ...rows,
+      [Markup.button.callback('🔙 Back to Management', 'manage_work_orders')]
+    ];
+
+    await ctx.reply('🟡 **In-Progress Work Orders**\n\nSelect an order to view details:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error loading in-progress work orders:', error);
+    await ctx.reply('⚠️ An error occurred while loading in-progress work orders.');
+  }
+});
+
+// Manage Completed Work Orders
+bot.action('wo_manage_completed', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) {
+      return ctx.reply('⚠️ Access denied.');
+    }
+
+    const workOrders = await prisma.workOrder.findMany({
+      where: { facilityId: user.activeFacilityId, status: { in: ['done', 'closed'] } },
+      include: { byUser: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 15
+    });
+
+    if (!workOrders.length) {
+      return ctx.reply('🟢 No completed work orders.');
+    }
+
+    const rows = workOrders.map(wo => [
+      Markup.button.callback(
+        `🟢 #${wo.id.toString()} • ${wo.byUser?.firstName || 'User'}\n${wo.description.slice(0, 40)}${wo.description.length > 40 ? '...' : ''}`,
+        `wo_view|${wo.id.toString()}`
+      )
+    ]);
+
+    const buttons = [
+      ...rows,
+      [Markup.button.callback('🔙 Back to Management', 'manage_work_orders')]
+    ];
+
+    await ctx.reply('🟢 **Completed Work Orders**\n\nSelect an order to view details:', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error loading completed work orders:', error);
+    await ctx.reply('⚠️ An error occurred while loading completed work orders.');
+  }
+});
+
+// Load more for All Work Orders (basic pagination)
+bot.action('wo_manage_all_more', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) {
+      return ctx.reply('⚠️ Access denied.');
+    }
+
+    const workOrders = await prisma.workOrder.findMany({
+      where: { facilityId: user.activeFacilityId },
+      include: { byUser: true },
+      orderBy: { createdAt: 'desc' },
+      skip: 10,
+      take: 10
+    });
+
+    if (!workOrders.length) {
+      return ctx.reply('📋 No more work orders.');
+    }
+
+    let woList = '📋 **More Work Orders**\n\n';
+    workOrders.forEach((wo, index) => {
+      const statusEmoji = {
+        'open': '🔵',
+        'in_progress': '🟡',
+        'done': '🟢',
+        'closed': '⚫'
+      };
+      woList += `${index + 11}. ${statusEmoji[wo.status] || '⚪'} **WO#${wo.id.toString()}**\n`;
+      woList += `   📝 ${wo.description.slice(0, 50)}${wo.description.length > 50 ? '...' : ''}\n`;
+      woList += `   👤 ${wo.byUser?.firstName || 'Unknown'}\n`;
+      woList += `   📅 ${wo.createdAt.toLocaleDateString()}\n\n`;
+    });
+
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Management', 'manage_work_orders')]
+    ];
+
+    await ctx.reply(woList, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error loading more work orders:', error);
+    await ctx.reply('⚠️ An error occurred while loading more work orders.');
+  }
+});
+
+// Search Work Orders (prompt)
+bot.action('wo_search', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, member } = await requireActiveMembership(ctx);
+
+    if (!member || !['facility_admin', 'supervisor', 'technician'].includes(member.role)) {
+      return ctx.reply('⚠️ You need admin or technician privileges to search work orders.');
+    }
+
+    FlowManager.setFlow(ctx.from.id.toString(), 'wo_search', 1, {});
+    await ctx.reply(
+      '🔎 **Search Work Orders**\n\n' +
+      'أدخل كلمات البحث أو رقم البلاغ (مثال: #123)\n' +
+      'يمكنك البحث في الوصف والموقع والمعدات ونوع العمل والخدمة.',
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    console.error('Error starting work order search:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء بدء البحث.');
   }
 });
 
