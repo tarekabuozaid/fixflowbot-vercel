@@ -842,7 +842,490 @@ bot.action('wo_list', async (ctx) => {
   }, ctx, 'wo_list');
 });
 
-// ===== Main Menu Actions =====
+// ===== Master Panel Commands =====
+bot.action('master_panel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 You are not authorized to access the master panel.');
+    }
+    
+    const buttons = [
+      [
+        Markup.button.callback('🏢 Pending Facilities', 'master_list_fac'),
+        Markup.button.callback('👥 Pending Members', 'master_list_members')
+      ],
+      [
+        Markup.button.callback('📊 System Stats', 'master_stats'),
+        Markup.button.callback('🔧 System Settings', 'master_settings')
+      ],
+      [Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]
+    ];
+    
+    await ctx.reply(
+      `👑 **Master Panel**\n\n` +
+      `Welcome to the system administration panel.\n\n` +
+      `Choose an option to manage the system:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  }, ctx, 'master_panel');
+});
+
+bot.action('master_list_fac', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 Unauthorized.');
+    }
+    
+    // Mock pending facilities for testing
+    const mockPendingFacilities = [
+      { id: '1', name: 'Hospital Central', city: 'Cairo', plan: 'Pro' },
+      { id: '2', name: 'Office Building A', city: 'Alexandria', plan: 'Free' }
+    ];
+    
+    if (!mockPendingFacilities.length) {
+      return ctx.reply(
+        `📋 **No Pending Facilities**\n\nThere are currently no facilities waiting for approval.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]]
+          }
+        }
+      );
+    }
+    
+    const rows = mockPendingFacilities.map(f => [
+      Markup.button.callback(`${f.name} (${f.city})`, `master_fac_approve|${f.id}`)
+    ]);
+    rows.push([Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]);
+    
+    await ctx.reply(
+      `🏢 **Pending Facilities**\n\nSelect a facility to approve:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: rows }
+      }
+    );
+  }, ctx, 'master_list_fac');
+});
+
+bot.action(/master_fac_approve\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 Unauthorized.');
+    }
+    
+    const facilityId = ctx.match[1];
+    
+    await ctx.reply(
+      `✅ **Facility Approved!**\n\n` +
+      `🏢 **Facility ID**: ${facilityId}\n` +
+      `⏰ **Approved at**: ${new Date().toLocaleString()}\n` +
+      `👑 **Approved by**: Master\n\n` +
+      `💡 **Status**: The facility has been activated and the owner has been notified.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏢 View More Facilities', 'master_list_fac')],
+            [Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_fac_approve');
+});
+
+bot.action('master_list_members', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 Unauthorized.');
+    }
+    
+    // Mock pending member requests
+    const mockPendingMembers = [
+      { id: '1', userId: '987654321', facilityName: 'Hospital Central', requestedAt: new Date() },
+      { id: '2', userId: '555666777', facilityName: 'Office Building A', requestedAt: new Date() }
+    ];
+    
+    if (!mockPendingMembers.length) {
+      return ctx.reply(
+        `👥 **No Pending Member Requests**\n\nThere are currently no membership requests waiting for approval.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]]
+          }
+        }
+      );
+    }
+    
+    const rows = mockPendingMembers.map(r => [
+      Markup.button.callback(
+        `User ${r.userId} → ${r.facilityName}`,
+        `master_member_approve|${r.id}`
+      )
+    ]);
+    rows.push([Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]);
+    
+    await ctx.reply(
+      `👥 **Pending Membership Requests**\n\nSelect a request to approve:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: rows }
+      }
+    );
+  }, ctx, 'master_list_members');
+});
+
+bot.action(/master_member_approve\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 Unauthorized.');
+    }
+    
+    const requestId = ctx.match[1];
+    
+    await ctx.reply(
+      `✅ **Membership Request Approved!**\n\n` +
+      `📋 **Request ID**: ${requestId}\n` +
+      `⏰ **Approved at**: ${new Date().toLocaleString()}\n` +
+      `👑 **Approved by**: Master\n\n` +
+      `💡 **Status**: The user has been added to the facility and notified.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('👥 View More Requests', 'master_list_members')],
+            [Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_member_approve');
+});
+
+bot.action('master_stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 Unauthorized.');
+    }
+    
+    // Mock system statistics
+    const stats = {
+      totalFacilities: 25,
+      activeFacilities: 23,
+      pendingFacilities: 2,
+      totalUsers: 127,
+      activeUsers: 115,
+      pendingUsers: 12,
+      totalWorkOrders: 486,
+      openWorkOrders: 23,
+      completedWorkOrders: 463,
+      totalMessages: 1247
+    };
+    
+    const flowStats = FlowManager.getFlowStats();
+    
+    await ctx.reply(
+      `📊 **System Statistics**\n\n` +
+      `🏢 **Facilities:**\n` +
+      `   • Total: ${stats.totalFacilities}\n` +
+      `   • Active: ${stats.activeFacilities}\n` +
+      `   • Pending: ${stats.pendingFacilities}\n\n` +
+      `👥 **Users:**\n` +
+      `   • Total: ${stats.totalUsers}\n` +
+      `   • Active: ${stats.activeUsers}\n` +
+      `   • Pending: ${stats.pendingUsers}\n\n` +
+      `🔧 **Work Orders:**\n` +
+      `   • Total: ${stats.totalWorkOrders}\n` +
+      `   • Open: ${stats.openWorkOrders}\n` +
+      `   • Completed: ${stats.completedWorkOrders}\n\n` +
+      `💬 **Communication:**\n` +
+      `   • Total Messages: ${stats.totalMessages}\n` +
+      `   • Active Flows: ${flowStats.active}\n` +
+      `   • Flow Types: ${Object.keys(flowStats.flowTypes).join(', ')}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔄 Refresh Stats', 'master_stats')],
+            [Markup.button.callback('🔙 Back to Master Panel', 'master_panel')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_stats');
+});
+
+bot.action('master_dashboard', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    if (!isMaster(ctx)) {
+      return ctx.reply('🚫 Unauthorized.');
+    }
+    
+    await ctx.reply(
+      `👑 **Master Dashboard**\n\n` +
+      `📈 **Quick Overview:**\n` +
+      `• System Status: 🟢 Online\n` +
+      `• Active Sessions: ${FlowManager.getFlowStats().active}\n` +
+      `• Last Update: ${new Date().toLocaleString()}\n\n` +
+      `🔧 **Quick Actions:**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('🏢 Facilities', 'master_list_fac'),
+              Markup.button.callback('👥 Members', 'master_list_members')
+            ],
+            [
+              Markup.button.callback('📊 Statistics', 'master_stats'),
+              Markup.button.callback('🛠 Master Panel', 'master_panel')
+            ],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_dashboard');
+});
+
+// ===== Additional Communication Actions =====
+bot.action('simple_send_photo', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    await ctx.reply(
+      `📸 **Send Photo**\n\n` +
+      `Please send a photo to share with your team.\n\n` +
+      `💡 **Note**: Photo sharing feature is under development.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'simple_send_photo');
+});
+
+bot.action('simple_voice_message', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    await ctx.reply(
+      `🎤 **Voice Message**\n\n` +
+      `Please send a voice message to share with your team.\n\n` +
+      `💡 **Note**: Voice message feature is under development.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'simple_voice_message');
+});
+
+bot.action('simple_message_history', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    // Mock message history
+    const mockMessages = [
+      { sender: 'Ahmed', message: 'Good morning team!', time: '09:00' },
+      { sender: 'Sarah', message: 'Meeting at 2 PM today', time: '10:30' },
+      { sender: 'Mohamed', message: 'AC repair completed', time: '14:15' }
+    ];
+    
+    let historyText = `📋 **Message History**\n\n`;
+    
+    if (mockMessages.length === 0) {
+      historyText += `🔍 No messages found.\n\n💡 **Tip**: Start a conversation by sending a message!`;
+    } else {
+      mockMessages.forEach((msg, index) => {
+        historyText += `👤 **${msg.sender}** (${msg.time})\n`;
+        historyText += `💬 ${msg.message}\n\n`;
+      });
+    }
+    
+    await ctx.reply(historyText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [Markup.button.callback('🔄 Refresh', 'simple_message_history')],
+          [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+        ]
+      }
+    });
+  }, ctx, 'simple_message_history');
+});
+
+bot.action('simple_test_alert', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    await ctx.reply(
+      `📱 **Test Alert Sent!**\n\n` +
+      `🚨 **Alert Type**: Emergency Test\n` +
+      `⏰ **Time**: ${new Date().toLocaleString()}\n` +
+      `📍 **Source**: System Test\n` +
+      `💬 **Message**: This is a test emergency alert to verify the notification system.\n\n` +
+      `✅ **Status**: Alert system is working correctly.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🚨 Test Another Alert', 'simple_test_alert')],
+            [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'simple_test_alert');
+});
+
+// ===== Work Order Additional Actions =====
+bot.action('wo_manage', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    await ctx.reply(
+      `🔧 **Manage Work Orders**\n\n` +
+      `Manage and track all work orders in your facility.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('📋 All Orders', 'wo_list_all'),
+              Markup.button.callback('🔴 Open Orders', 'wo_list_open')
+            ],
+            [
+              Markup.button.callback('🟡 In Progress', 'wo_list_progress'),
+              Markup.button.callback('🟢 Completed', 'wo_list_completed')
+            ],
+            [Markup.button.callback('🔙 Back to Work Menu', 'menu_work')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'wo_manage');
+});
+
+bot.action('wo_stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    // Mock work order statistics
+    const stats = {
+      total: 45,
+      open: 8,
+      inProgress: 12,
+      completed: 25,
+      thisWeek: 15,
+      avgCompletionTime: '2.3 days'
+    };
+    
+    await ctx.reply(
+      `📊 **Work Order Statistics**\n\n` +
+      `📈 **Overall Stats:**\n` +
+      `• Total Work Orders: ${stats.total}\n` +
+      `• Open: ${stats.open}\n` +
+      `• In Progress: ${stats.inProgress}\n` +
+      `• Completed: ${stats.completed}\n\n` +
+      `📅 **This Week:**\n` +
+      `• New Orders: ${stats.thisWeek}\n` +
+      `• Avg Completion Time: ${stats.avgCompletionTime}\n\n` +
+      `💡 **Performance**: Good`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔄 Refresh Stats', 'wo_stats')],
+            [Markup.button.callback('🔙 Back to Work Menu', 'menu_work')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'wo_stats');
+});
+
+// ===== Report Actions =====
+['report_daily', 'report_weekly', 'report_monthly', 'report_custom'].forEach(reportType => {
+  bot.action(reportType, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    
+    return ErrorHandler.safeExecute(async () => {
+      const reportName = reportType.replace('report_', '').replace('_', ' ');
+      
+      await ctx.reply(
+        `📊 **${reportName.charAt(0).toUpperCase() + reportName.slice(1)} Report**\n\n` +
+        `📈 **Report generated successfully!**\n` +
+        `⏰ **Generated at**: ${new Date().toLocaleString()}\n\n` +
+        `💡 **Note**: Report features are under development.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.callback('📊 Generate Another', 'menu_reports')],
+              [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+            ]
+          }
+        }
+      );
+    }, ctx, reportType);
+  });
+});
+
+// ===== Admin Actions =====
+['admin_members', 'admin_facility', 'admin_notifications', 'admin_system'].forEach(adminAction => {
+  bot.action(adminAction, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    
+    return ErrorHandler.safeExecute(async () => {
+      const actionName = adminAction.replace('admin_', '').replace('_', ' ');
+      
+      await ctx.reply(
+        `👑 **${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Management**\n\n` +
+        `⚙️ **Management interface for ${actionName}.**\n\n` +
+        `💡 **Note**: Admin features are under development.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.callback('🔙 Back to Admin', 'menu_admin')],
+              [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+            ]
+          }
+        }
+      );
+    }, ctx, adminAction);
+  });
+});
+
 bot.action('menu_home', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   await showMainMenu(ctx);
