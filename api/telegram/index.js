@@ -1789,32 +1789,40 @@ bot.action(/wo_service\|(electrical|mechanical|plumbing|hvac|structural|it|gener
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    const flowState = FlowManager.getFlow(ctx.from.id.toString());
-    if (!flowState || flowState.flow !== 'wo_new') {
-      return ctx.reply('⚠️ Invalid flow state. Please start over.');
-    }
-    
-    // Validate flow ownership
-    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+    try {
+      const flowState = FlowManager.getFlow(ctx.from.id.toString());
+      if (!flowState || flowState.flow !== 'wo_new') {
+        console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+        return ctx.reply('⚠️ Invalid flow state. Please start over.');
+      }
+      
+      // Validate flow ownership
+      if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+        console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+        FlowManager.clearFlow(ctx.from.id.toString());
+        return ctx.reply('⚠️ Session expired. Please start over.');
+      }
+      
+      FlowManager.updateData(ctx.from.id.toString(), { typeOfService: ctx.match[1] });
+      FlowManager.updateStep(ctx.from.id.toString(), 3);
+      
+      // Step 3: Choose priority
+      const priorityButtons = [
+        [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
+        [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
+        [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')],
+        [Markup.button.callback('❌ Cancel', 'wo_cancel')]
+      ];
+      
+      await ctx.reply(`🔧 **Work Order Creation (3/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n✅ **Service:** ${ctx.match[1]}\n\n**Choose priority:**`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: priorityButtons }
+      });
+    } catch (error) {
+      console.error('Error in wo_service:', error);
       FlowManager.clearFlow(ctx.from.id.toString());
-      return ctx.reply('⚠️ Session expired. Please start over.');
+      await ctx.reply('⚠️ An error occurred. Please start over.');
     }
-    
-    FlowManager.updateData(ctx.from.id.toString(), { typeOfService: ctx.match[1] });
-    FlowManager.updateStep(ctx.from.id.toString(), 3);
-    
-    // Step 3: Choose priority
-    const priorityButtons = [
-      [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
-      [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
-      [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')],
-      [Markup.button.callback('❌ Cancel', 'wo_cancel')]
-    ];
-    
-    await ctx.reply(`🔧 **Work Order Creation (3/6)**\n\n✅ **Type:** ${flowState.data.typeOfWork}\n✅ **Service:** ${ctx.match[1]}\n\n**Choose priority:**`, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: priorityButtons }
-    });
   }, ctx, 'wo_service_selection');
 });
 
@@ -1823,31 +1831,61 @@ bot.action(/wo_priority\|(high|medium|low)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    const flowState = FlowManager.getFlow(ctx.from.id.toString());
-    if (!flowState || flowState.flow !== 'wo_new') {
-      return ctx.reply('⚠️ Invalid flow state. Please start over.');
-    }
-    
-    // Validate flow ownership
-    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+    try {
+      const flowState = FlowManager.getFlow(ctx.from.id.toString());
+      if (!flowState || flowState.flow !== 'wo_new') {
+        console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+        return ctx.reply('⚠️ Invalid flow state. Please start over.');
+      }
+      
+      // Validate flow ownership
+      if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+        console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+        FlowManager.clearFlow(ctx.from.id.toString());
+        return ctx.reply('⚠️ Session expired. Please start over.');
+      }
+      
+      FlowManager.updateData(ctx.from.id.toString(), { priority: ctx.match[1] });
+      FlowManager.updateStep(ctx.from.id.toString(), 4);
+      
+      await ctx.reply(
+        `🔧 **Work Order Creation (4/6)**\n\n` +
+        `✅ **Type:** ${flowState.data.typeOfWork}\n` +
+        `✅ **Service:** ${flowState.data.typeOfService}\n` +
+        `✅ **Priority:** ${ctx.match[1]}\n\n` +
+        `📍 **Enter the location/area**\n` +
+        `(e.g., Building A, Floor 2, Room 101)\n\n` +
+        `Type /cancel to exit`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      console.error('Error in wo_priority:', error);
       FlowManager.clearFlow(ctx.from.id.toString());
-      return ctx.reply('⚠️ Session expired. Please start over.');
+      await ctx.reply('⚠️ An error occurred. Please start over.');
     }
-    
-    FlowManager.updateData(ctx.from.id.toString(), { priority: ctx.match[1] });
-    FlowManager.updateStep(ctx.from.id.toString(), 4);
-    
-    await ctx.reply(
-      `🔧 **Work Order Creation (4/6)**\n\n` +
-      `✅ **Type:** ${flowState.data.typeOfWork}\n` +
-      `✅ **Service:** ${flowState.data.typeOfService}\n` +
-      `✅ **Priority:** ${ctx.match[1]}\n\n` +
-      `📍 **Enter the location/area**\n` +
-      `(e.g., Building A, Floor 2, Room 101)\n\n` +
-      `Type /cancel to exit`,
-      { parse_mode: 'Markdown' }
-    );
   }, ctx, 'wo_priority_selection');
+});
+
+// Handle work order cancellation
+bot.action('wo_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    try {
+      FlowManager.clearFlow(ctx.from.id.toString());
+      await ctx.reply('❌ Work order creation cancelled.', {
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('➕ Create New Work Order', 'wo_new')],
+            [Markup.button.callback('🔙 Back to Work Menu', 'menu_work')]
+          ]
+        }
+      });
+    } catch (error) {
+      console.error('Error in wo_cancel:', error);
+      await ctx.reply('⚠️ An error occurred while cancelling. Please try again.');
+    }
+  }, ctx, 'wo_cancel');
 });
 
 // Handle facility registration cancellation
