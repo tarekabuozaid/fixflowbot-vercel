@@ -378,8 +378,8 @@ async function showMainMenu(ctx) {
       
       // Add communication button for all active users
       buttons.push([
-        Markup.button.callback('💬 Team Chat', 'team_communication_menu'),
-        Markup.button.callback('📸 Media Share', 'media_share_menu')
+        Markup.button.callback('💬 Team Chat', 'simple_communication'),
+        Markup.button.callback('📸 Media Share', 'simple_media_share')
       ]);
       
       // Check if user is technician to show technician dashboard
@@ -1026,6 +1026,16 @@ bot.action('team_communication_menu', async (ctx) => {
       include: { chatRoom: true }
     });
     
+    // Check if user is alone in facility
+    const facilityMembers = await prisma.facilityMember.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        status: 'active'
+      }
+    });
+    
+    const isAlone = facilityMembers <= 1;
+    
     const buttons = [
       [
         Markup.button.callback('💬 Team Chat', 'join_team_chat'),
@@ -1034,12 +1044,24 @@ bot.action('team_communication_menu', async (ctx) => {
       [
         Markup.button.callback('🎤 Voice Message', 'voice_message'),
         Markup.button.callback('📹 Video Call', 'video_call')
-      ],
-      [
-        Markup.button.callback('➕ Create Chat Room', 'create_chat_room'),
-        Markup.button.callback('📋 My Chat Rooms', 'my_chat_rooms')
       ]
     ];
+    
+    // Only show create room if user has permissions and not alone
+    if (!isAlone) {
+      buttons.push([
+        Markup.button.callback('➕ Create Chat Room', 'create_chat_room'),
+        Markup.button.callback('📋 My Chat Rooms', 'my_chat_rooms')
+      ]);
+    }
+    
+    // Add test mode for single users
+    if (isAlone) {
+      buttons.push([
+        Markup.button.callback('🧪 Test Communication', 'test_communication'),
+        Markup.button.callback('📝 Send Test Message', 'send_test_message')
+      ]);
+    }
     
     // Add existing chat rooms
     if (chatRooms.length > 0) {
@@ -1057,7 +1079,9 @@ bot.action('team_communication_menu', async (ctx) => {
     const message = 
       `💬 **Team Communication**\n\n` +
       `📊 **Available Chat Rooms**: ${chatRooms.length}\n` +
-      `👥 **Your Memberships**: ${userMemberships.length}\n\n` +
+      `👥 **Your Memberships**: ${userMemberships.length}\n` +
+      `👤 **Facility Members**: ${facilityMembers}\n\n` +
+      `${isAlone ? '🧪 **Test Mode**: You are alone in this facility. Use test features to try communication.\n\n' : ''}` +
       `Choose a communication option:`;
     
     await ctx.reply(message, {
@@ -1275,6 +1299,481 @@ bot.action('video_call', async (ctx) => {
   } catch (error) {
     console.error('Error in video call menu:', error);
     await ctx.reply('⚠️ An error occurred while loading video call options.');
+  }
+});
+
+// ===== وضع التجربة للتواصل الفردي =====
+
+// اختبار التواصل
+bot.action('test_communication', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check if user is alone
+    const facilityMembers = await prisma.facilityMember.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        status: 'active'
+      }
+    });
+    
+    if (facilityMembers > 1) {
+      return ctx.reply('⚠️ Test mode is only available when you are alone in the facility.');
+    }
+    
+    const buttons = [
+      [
+        Markup.button.callback('📝 Send Test Message', 'send_test_message'),
+        Markup.button.callback('📸 Test Photo', 'test_photo')
+      ],
+      [
+        Markup.button.callback('🎤 Test Voice', 'test_voice'),
+        Markup.button.callback('📹 Test Video', 'test_video')
+      ],
+      [
+        Markup.button.callback('📎 Test File', 'test_file'),
+        Markup.button.callback('📍 Test Location', 'test_location')
+      ],
+      [Markup.button.callback('🔙 Back to Communication', 'team_communication_menu')]
+    ];
+    
+    await ctx.reply(
+      `🧪 **Test Communication Mode**\n\n` +
+      `You are currently alone in this facility.\n` +
+      `Use these test features to try the communication system:\n\n` +
+      `📝 **Test Features**:\n` +
+      `• Send test messages\n` +
+      `• Test media sharing\n` +
+      `• Test voice messages\n` +
+      `• Test file sharing\n` +
+      `• Test location sharing\n\n` +
+      `💡 **Note**: These are test messages that will be sent to yourself for demonstration purposes.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in test communication:', error);
+    await ctx.reply('⚠️ An error occurred while loading test mode.');
+  }
+});
+
+// إرسال رسالة تجريبية
+bot.action('send_test_message', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    FlowManager.setFlow(user.tgId.toString(), 'test_message', 1, {});
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Test Mode', 'test_communication')]
+    ];
+    
+    await ctx.reply(
+      `📝 **Send Test Message**\n\n` +
+      `Type your test message below:\n\n` +
+      `💡 **Examples**:\n` +
+      `• "Hello, this is a test message!"\n` +
+      `• "Testing the communication system"\n` +
+      `• "How does this work?"\n\n` +
+      `Your message will be sent as a test notification.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in send test message:', error);
+    await ctx.reply('⚠️ An error occurred while setting up test message.');
+  }
+});
+
+// اختبار الصور
+bot.action('test_photo', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Test Mode', 'test_communication')]
+    ];
+    
+    await ctx.reply(
+      `📸 **Test Photo Sharing**\n\n` +
+      `Send a photo to test the media sharing feature.\n\n` +
+      `📝 **Instructions**:\n` +
+      `1. Tap the camera icon or attach a photo\n` +
+      `2. Send the photo\n` +
+      `3. The photo will be processed as a test\n\n` +
+      `💡 **Note**: This will simulate sharing a photo with your team.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in test photo:', error);
+    await ctx.reply('⚠️ An error occurred while setting up photo test.');
+  }
+});
+
+// اختبار الرسائل الصوتية
+bot.action('test_voice', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Test Mode', 'test_communication')]
+    ];
+    
+    await ctx.reply(
+      `🎤 **Test Voice Message**\n\n` +
+      `Record and send a voice message to test the voice feature.\n\n` +
+      `📝 **Instructions**:\n` +
+      `1. Tap the microphone icon\n` +
+      `2. Record your voice message\n` +
+      `3. Send the voice message\n\n` +
+      `💡 **Note**: This will simulate sending a voice message to your team.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in test voice:', error);
+    await ctx.reply('⚠️ An error occurred while setting up voice test.');
+  }
+});
+
+});
+
+// ===== نظام التواصل المبسط =====
+
+// التواصل البسيط
+bot.action('simple_communication', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check facility members
+    const facilityMembers = await prisma.facilityMember.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        status: 'active'
+      }
+    });
+    
+    const isAlone = facilityMembers <= 1;
+    
+    const buttons = [
+      [
+        Markup.button.callback('📝 Send Message', 'simple_send_message'),
+        Markup.button.callback('📸 Send Photo', 'simple_send_photo')
+      ],
+      [
+        Markup.button.callback('🎤 Voice Message', 'simple_voice_message'),
+        Markup.button.callback('📋 Message History', 'simple_message_history')
+      ]
+    ];
+    
+    if (isAlone) {
+      buttons.push([
+        Markup.button.callback('🧪 Test Notification', 'simple_test_notification'),
+        Markup.button.callback('📱 Test Alert', 'simple_test_alert')
+      ]);
+    }
+    
+    buttons.push([Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]);
+    
+    const message = 
+      `💬 **Team Communication**\n\n` +
+      `👤 **Facility Members**: ${facilityMembers}\n` +
+      `${isAlone ? '🧪 **Test Mode**: You are alone in this facility. Use test features.\n\n' : ''}` +
+      `Choose a communication option:`;
+    
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in simple communication:', error);
+    await ctx.reply('⚠️ An error occurred while loading communication.');
+  }
+});
+
+// إرسال رسالة بسيطة
+bot.action('simple_send_message', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    FlowManager.setFlow(user.tgId.toString(), 'simple_message', 1, {});
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+    ];
+    
+    await ctx.reply(
+      `📝 **Send Message**\n\n` +
+      `Type your message below:\n\n` +
+      `💡 **Note**: Your message will be sent to all team members (or as a test if you're alone).`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in simple send message:', error);
+    await ctx.reply('⚠️ An error occurred while setting up message.');
+  }
+});
+
+// إشعار تجريبي بسيط
+bot.action('simple_test_notification', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Send test notification
+    await createNotification(
+      user.id,
+      user.activeFacilityId,
+      'system_alert',
+      '🧪 Test Notification',
+      'This is a test notification to verify the communication system is working properly.',
+      { testMode: true }
+    );
+    
+    await sendTelegramNotification(
+      user.id,
+      '🧪 Test Notification',
+      `✅ **Communication Test Successful!**\n\n⏰ **Time**: ${new Date().toLocaleString()}\n🔔 **Type**: System Alert\n💬 **Status**: Notification delivered\n\n💡 **Note**: This confirms your notification system is working correctly.`,
+      [
+        [Markup.button.callback('🔔 Test Another', 'simple_test_notification')],
+        [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+      ],
+      'system_alert'
+    );
+    
+    await ctx.reply(
+      `✅ **Test Notification Sent!**\n\n` +
+      `🔔 **Status**: Successfully sent\n` +
+      `⏰ **Time**: ${new Date().toLocaleString()}\n\n` +
+      `💡 **You should receive a notification shortly.**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔔 Test Another', 'simple_test_notification')],
+            [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error in test notification:', error);
+    await ctx.reply('⚠️ An error occurred while sending test notification.');
+  }
+});
+
+// مشاركة الميديا البسيطة
+bot.action('simple_media_share', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const buttons = [
+      [
+        Markup.button.callback('📸 Share Photo', 'simple_share_photo'),
+        Markup.button.callback('📹 Share Video', 'simple_share_video')
+      ],
+      [
+        Markup.button.callback('📎 Share File', 'simple_share_file'),
+        Markup.button.callback('🎤 Voice Message', 'simple_voice_message')
+      ],
+      [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+    ];
+    
+    await ctx.reply(
+      `📸 **Media Sharing**\n\n` +
+      `Share photos, videos, files, and voice messages.\n\n` +
+      `Choose what you want to share:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in simple media share:', error);
+    await ctx.reply('⚠️ An error occurred while loading media sharing.');
+  }
+});
+
+
+
+// ===== نظام التواصل المبسط =====
+
+// التواصل البسيط
+bot.action('simple_communication', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Check facility members
+    const facilityMembers = await prisma.facilityMember.count({
+      where: { 
+        facilityId: user.activeFacilityId,
+        status: 'active'
+      }
+    });
+    
+    const isAlone = facilityMembers <= 1;
+    
+    const buttons = [
+      [
+        Markup.button.callback('📝 Send Message', 'simple_send_message'),
+        Markup.button.callback('📸 Send Photo', 'simple_send_photo')
+      ],
+      [
+        Markup.button.callback('🎤 Voice Message', 'simple_voice_message'),
+        Markup.button.callback('📋 Message History', 'simple_message_history')
+      ]
+    ];
+    
+    if (isAlone) {
+      buttons.push([
+        Markup.button.callback('🧪 Test Notification', 'simple_test_notification'),
+        Markup.button.callback('📱 Test Alert', 'simple_test_alert')
+      ]);
+    }
+    
+    buttons.push([Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]);
+    
+    const message = 
+      `💬 **Team Communication**\n\n` +
+      `👤 **Facility Members**: ${facilityMembers}\n` +
+      `${isAlone ? '🧪 **Test Mode**: You are alone in this facility. Use test features.\n\n' : ''}` +
+      `Choose a communication option:`;
+    
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in simple communication:', error);
+    await ctx.reply('⚠️ An error occurred while loading communication.');
+  }
+});
+
+// إرسال رسالة بسيطة
+bot.action('simple_send_message', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    FlowManager.setFlow(user.tgId.toString(), 'simple_message', 1, {});
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+    ];
+    
+    await ctx.reply(
+      `📝 **Send Message**\n\n` +
+      `Type your message below:\n\n` +
+      `💡 **Note**: Your message will be sent to all team members (or as a test if you're alone).`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in simple send message:', error);
+    await ctx.reply('⚠️ An error occurred while setting up message.');
+  }
+});
+
+// إشعار تجريبي بسيط
+bot.action('simple_test_notification', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Send test notification
+    await createNotification(
+      user.id,
+      user.activeFacilityId,
+      'system_alert',
+      '🧪 Test Notification',
+      'This is a test notification to verify the communication system is working properly.',
+      { testMode: true }
+    );
+    
+    await sendTelegramNotification(
+      user.id,
+      '🧪 Test Notification',
+      `✅ **Communication Test Successful!**\n\n⏰ **Time**: ${new Date().toLocaleString()}\n🔔 **Type**: System Alert\n💬 **Status**: Notification delivered\n\n💡 **Note**: This confirms your notification system is working correctly.`,
+      [
+        [Markup.button.callback('🔔 Test Another', 'simple_test_notification')],
+        [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+      ],
+      'system_alert'
+    );
+    
+    await ctx.reply(
+      `✅ **Test Notification Sent!**\n\n` +
+      `🔔 **Status**: Successfully sent\n` +
+      `⏰ **Time**: ${new Date().toLocaleString()}\n\n` +
+      `💡 **You should receive a notification shortly.**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔔 Test Another', 'simple_test_notification')],
+            [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error in test notification:', error);
+    await ctx.reply('⚠️ An error occurred while sending test notification.');
+  }
+});
+
+// مشاركة الميديا البسيطة
+bot.action('simple_media_share', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const buttons = [
+      [
+        Markup.button.callback('📸 Share Photo', 'simple_share_photo'),
+        Markup.button.callback('📹 Share Video', 'simple_share_video')
+      ],
+      [
+        Markup.button.callback('📎 Share File', 'simple_share_file'),
+        Markup.button.callback('🎤 Voice Message', 'simple_voice_message')
+      ],
+      [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+    ];
+    
+    await ctx.reply(
+      `📸 **Media Sharing**\n\n` +
+      `Share photos, videos, files, and voice messages.\n\n` +
+      `Choose what you want to share:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in simple media share:', error);
+    await ctx.reply('⚠️ An error occurred while loading media sharing.');
   }
 });
 
@@ -2140,7 +2639,96 @@ bot.on('text', async (ctx, next) => {
           );
         }
       }
-    } catch (e) {
+
+      
+      // === SIMPLE MESSAGE FLOW ===
+      if (flowState.flow === 'simple_message') {
+        if (flowState.step === 1) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ Message cancelled.', {
+              reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Communication', callback_data: 'simple_communication' }]] }
+            });
+          }
+          
+          // Check if user is alone
+          const facilityMembers = await prisma.facilityMember.count({
+            where: { 
+              facilityId: user.activeFacilityId,
+              status: 'active'
+            }
+          });
+          
+          if (facilityMembers <= 1) {
+            // Send test notification to user (solo mode)
+            await createNotification(
+              user.id,
+              user.activeFacilityId,
+              'system_alert',
+              '🧪 Test Message Received',
+              `Your message: "${text}"\n\nThis is a test since you are alone in the facility.`,
+              { testMode: true, originalMessage: text }
+            );
+            
+            await sendTelegramNotification(
+              user.id,
+              '🧪 Test Message Received',
+              `Your message has been processed!\n\n📝 **Message**: "${text}"\n⏰ **Time**: ${new Date().toLocaleString()}\n\n✅ **Status**: Test completed (solo mode)`,
+              [
+                [Markup.button.callback('📝 Send Another', 'simple_send_message')],
+                [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+              ],
+              'system_alert'
+            );
+          } else {
+            // Send to all team members
+            const members = await prisma.facilityMember.findMany({
+              where: { 
+                facilityId: user.activeFacilityId,
+                status: 'active',
+                userId: { not: user.id } // Don't send to sender
+              },
+              include: { user: true }
+            });
+            
+            for (const member of members) {
+              if (member.user.tgId) {
+                try {
+                  await sendTelegramNotification(
+                    member.userId,
+                    '💬 Team Message',
+                    `**From**: ${user.firstName || 'Team Member'}\n**Message**: ${text}\n\n⏰ ${new Date().toLocaleString()}`,
+                    null,
+                    'team_communication'
+                  );
+                } catch (error) {
+                  console.error(`Error sending to member ${member.userId}:`, error);
+                }
+              }
+            }
+          }
+          
+          FlowManager.clearFlow(ctx.from.id.toString());
+          
+          return ctx.reply(
+            `✅ **Message Sent Successfully!**\n\n` +
+            `📝 **Your Message**: "${text}"\n` +
+            `⏰ **Time**: ${new Date().toLocaleString()}\n` +
+            `👥 **Recipients**: ${facilityMembers <= 1 ? 'Test mode (you only)' : `${facilityMembers - 1} team members`}\n\n` +
+            `💡 **Status**: Message delivered`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [Markup.button.callback('📝 Send Another', 'simple_send_message')],
+                  [Markup.button.callback('🔙 Back to Communication', 'simple_communication')]
+                ]
+              }
+            }
+          );
+        }
+      }
+          } catch (e) {
       console.error('FLOW_ERROR', e);
       FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ An error occurred. Please try again.');
@@ -2425,10 +3013,10 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
         }
       } catch (err) {
         console.error('Failed to notify master:', err);
-      }
-    }
-    
-  } catch (error) {
+        }
+}
+
+// ===== وضع التجربة للتواصل الفردي ===== catch (error) {
     console.error('Error in facility registration:', error);
     FlowManager.clearFlow(ctx.from.id.toString());
     
