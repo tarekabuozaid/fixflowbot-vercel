@@ -27,6 +27,8 @@ model User {
   reminders        Reminder[]
   activeFacility   Facility?        @relation(fields: [activeFacilityId], references: [id])
   workOrders       WorkOrder[]      @relation("WO_ByUser")
+  chatMemberships  ChatMember[]     // عضوية في غرف الدردشة
+  chatMessages     ChatMessage[]     // الرسائل المرسلة
 
   @@index([activeFacilityId])
 }
@@ -47,6 +49,7 @@ model Facility {
   reports       Report[]
   reminders     Reminder[]
   switchRequests FacilitySwitchRequest[]
+  chatRooms     ChatRoom[]          // غرف الدردشة في المنشأة
 }
 
 model FacilityMember {
@@ -240,4 +243,82 @@ enum ReminderFrequency {
   weekly
   monthly
   custom
+}
+
+// ===== نظام التواصل الجماعي =====
+
+model ChatRoom {
+  id          BigInt   @id @default(autoincrement())
+  facilityId  BigInt
+  name        String   // اسم الغرفة
+  description String?  // وصف الغرفة
+  type        ChatType @default(team) // نوع الغرفة
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  createdBy   BigInt   // معرف منشئ الغرفة
+  facility    Facility @relation(fields: [facilityId], references: [id])
+  messages    ChatMessage[]
+  members     ChatMember[]
+
+  @@index([facilityId, type, isActive])
+}
+
+model ChatMember {
+  id         BigInt   @id @default(autoincrement())
+  chatRoomId BigInt
+  userId     BigInt
+  role       ChatRole  @default(member) // دور العضو في الغرفة
+  joinedAt   DateTime  @default(now())
+  isActive   Boolean  @default(true)
+  chatRoom   ChatRoom @relation(fields: [chatRoomId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([chatRoomId, userId])
+  @@index([chatRoomId, isActive])
+}
+
+model ChatMessage {
+  id         BigInt        @id @default(autoincrement())
+  chatRoomId BigInt
+  userId     BigInt
+  messageType MessageType   @default(text)
+  content    String        // محتوى الرسالة
+  mediaUrl   String?       // رابط الميديا (صورة، صوت، فيديو)
+  replyToId  BigInt?       // معرف الرسالة المرد عليها
+  isEdited   Boolean       @default(false)
+  isDeleted  Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  chatRoom   ChatRoom      @relation(fields: [chatRoomId], references: [id])
+  user       User          @relation(fields: [userId], references: [id])
+  replyTo    ChatMessage?  @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies    ChatMessage[] @relation("MessageReplies")
+
+  @@index([chatRoomId, createdAt])
+  @@index([userId, createdAt])
+  @@index([replyToId])
+}
+
+enum ChatType {
+  team       // غرفة الفريق العامة
+  project    // غرفة مشروع محدد
+  support    // غرفة الدعم الفني
+  emergency  // غرفة الطوارئ
+  private    // غرفة خاصة
+}
+
+enum ChatRole {
+  admin      // مدير الغرفة
+  moderator  // مشرف الغرفة
+  member     // عضو عادي
+}
+
+enum MessageType {
+  text       // رسالة نصية
+  image      // صورة
+  voice      // رسالة صوتية
+  video      // فيديو
+  file       // ملف
+  location   // موقع
+  contact    // جهة اتصال
 }

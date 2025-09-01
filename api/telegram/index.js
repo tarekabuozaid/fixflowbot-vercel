@@ -376,6 +376,12 @@ async function showMainMenu(ctx) {
         Markup.button.callback('📊 Reports', 'menu_reports')
       ]);
       
+      // Add communication button for all active users
+      buttons.push([
+        Markup.button.callback('💬 Team Chat', 'team_communication_menu'),
+        Markup.button.callback('📸 Media Share', 'media_share_menu')
+      ]);
+      
       // Check if user is technician to show technician dashboard
       if (membership && membership.role === 'technician') {
         buttons.push([
@@ -1000,6 +1006,277 @@ async function requireActiveMembership(ctx) {
     throw error;
   }
 }
+
+// ===== نظام التواصل الجماعي - معالجات الأحداث =====
+
+// ===== نظام التواصل الجماعي - معالجات الأحداث =====
+
+// قائمة التواصل الجماعي الرئيسية
+bot.action('team_communication_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const chatRooms = await getFacilityChatRooms(user.activeFacilityId);
+    const userMemberships = await prisma.chatMember.findMany({
+      where: { 
+        userId: user.id,
+        isActive: true
+      },
+      include: { chatRoom: true }
+    });
+    
+    const buttons = [
+      [
+        Markup.button.callback('💬 Team Chat', 'join_team_chat'),
+        Markup.button.callback('📸 Share Media', 'share_media')
+      ],
+      [
+        Markup.button.callback('🎤 Voice Message', 'voice_message'),
+        Markup.button.callback('📹 Video Call', 'video_call')
+      ],
+      [
+        Markup.button.callback('➕ Create Chat Room', 'create_chat_room'),
+        Markup.button.callback('📋 My Chat Rooms', 'my_chat_rooms')
+      ]
+    ];
+    
+    // Add existing chat rooms
+    if (chatRooms.length > 0) {
+      const roomButtons = chatRooms.slice(0, 3).map(room => [
+        Markup.button.callback(
+          `💬 ${room.name} (${room._count.members} members)`,
+          `join_chat_room|${room.id}`
+        )
+      ]);
+      buttons.push(...roomButtons);
+    }
+    
+    buttons.push([Markup.button.callback('🔙 Back to Main Menu', 'back_to_menu')]);
+    
+    const message = 
+      `💬 **Team Communication**\n\n` +
+      `📊 **Available Chat Rooms**: ${chatRooms.length}\n` +
+      `👥 **Your Memberships**: ${userMemberships.length}\n\n` +
+      `Choose a communication option:`;
+    
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in team communication menu:', error);
+    await ctx.reply('⚠️ An error occurred while loading communication menu.');
+  }
+});
+
+// إنشاء غرفة دردشة جديدة
+bot.action('create_chat_room', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, membership } = await requireActiveMembership(ctx);
+    
+    // Check if user can create chat rooms (admin or supervisor)
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ Only admins and supervisors can create chat rooms.');
+    }
+    
+    FlowManager.setFlow(user.tgId.toString(), 'create_chat_room', 1, {});
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Communication', 'team_communication_menu')]
+    ];
+    
+    await ctx.reply(
+      `➕ **Create New Chat Room** (1/4)\n\n` +
+      `Please enter the chat room name (max 50 characters):\n\n` +
+      `💡 **Examples**:\n` +
+      `• General Team Chat\n` +
+      `• Emergency Alerts\n` +
+      `• Project Discussion\n` +
+      `• Technical Support`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error creating chat room:', error);
+    await ctx.reply('⚠️ An error occurred while creating chat room.');
+  }
+});
+
+// الانضمام لغرفة الفريق العامة
+bot.action('join_team_chat', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    // Find or create general team chat
+    let teamChat = await prisma.chatRoom.findFirst({
+      where: {
+        facilityId: user.activeFacilityId,
+        type: 'team',
+        isActive: true
+      }
+    });
+    
+    if (!teamChat) {
+      // Create general team chat if it doesn't exist
+      teamChat = await createChatRoom(
+        user.activeFacilityId,
+        'General Team Chat',
+        'Main team communication channel',
+        'team',
+        user.id
+      );
+    }
+    
+    // Add user to chat room if not already a member
+    const existingMember = await prisma.chatMember.findFirst({
+      where: {
+        chatRoomId: teamChat.id,
+        userId: user.id
+      }
+    });
+    
+    if (!existingMember) {
+      await addChatMember(teamChat.id, user.id, 'member');
+    }
+    
+    // Start chat session
+    FlowManager.setFlow(user.tgId.toString(), 'team_chat', 1, { chatRoomId: teamChat.id });
+    
+    const buttons = [
+      [Markup.button.callback('📤 Send Message', 'send_chat_message')],
+      [Markup.button.callback('📸 Send Photo', 'send_chat_photo')],
+      [Markup.button.callback('🎤 Send Voice', 'send_chat_voice')],
+      [Markup.button.callback('📋 View Messages', 'view_chat_messages')],
+      [Markup.button.callback('🔙 Leave Chat', 'leave_chat_room')]
+    ];
+    
+    await ctx.reply(
+      `💬 **Team Chat Room**\n\n` +
+      `🏠 **Room**: ${teamChat.name}\n` +
+      `👥 **Members**: ${teamChat._count?.members || 0}\n` +
+      `💬 **Messages**: ${teamChat._count?.messages || 0}\n\n` +
+      `You are now in the team chat. Choose an action:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error joining team chat:', error);
+    await ctx.reply('⚠️ An error occurred while joining team chat.');
+  }
+});
+
+// مشاركة الميديا
+bot.action('media_share_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const buttons = [
+      [
+        Markup.button.callback('📸 Share Photo', 'share_photo'),
+        Markup.button.callback('📹 Share Video', 'share_video')
+      ],
+      [
+        Markup.button.callback('📎 Share File', 'share_file'),
+        Markup.button.callback('📍 Share Location', 'share_location')
+      ],
+      [
+        Markup.button.callback('🎤 Voice Message', 'share_voice'),
+        Markup.button.callback('📝 Document', 'share_document')
+      ],
+      [Markup.button.callback('🔙 Back to Communication', 'team_communication_menu')]
+    ];
+    
+    await ctx.reply(
+      `📸 **Media Sharing**\n\n` +
+      `Share photos, videos, files, and more with your team.\n\n` +
+      `Choose what you want to share:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in media share menu:', error);
+    await ctx.reply('⚠️ An error occurred while loading media sharing.');
+  }
+});
+
+// الرسائل الصوتية
+bot.action('voice_message', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    FlowManager.setFlow(user.tgId.toString(), 'voice_message', 1, {});
+    
+    const buttons = [
+      [Markup.button.callback('🔙 Back to Communication', 'team_communication_menu')]
+    ];
+    
+    await ctx.reply(
+      `🎤 **Voice Message**\n\n` +
+      `Record and send a voice message to your team.\n\n` +
+      `📝 **Instructions**:\n` +
+      `1. Tap the microphone icon in Telegram\n` +
+      `2. Record your message\n` +
+      `3. Send the voice message\n\n` +
+      `Your voice message will be shared with all team members.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in voice message:', error);
+    await ctx.reply('⚠️ An error occurred while setting up voice message.');
+  }
+});
+
+// مكالمات الفيديو
+bot.action('video_call', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user } = await requireActiveMembership(ctx);
+    
+    const buttons = [
+      [
+        Markup.button.callback('📞 Start Video Call', 'start_video_call'),
+        Markup.button.callback('📞 Join Call', 'join_video_call')
+      ],
+      [
+        Markup.button.callback('📋 Call History', 'call_history'),
+        Markup.button.callback('⚙️ Call Settings', 'call_settings')
+      ],
+      [Markup.button.callback('🔙 Back to Communication', 'team_communication_menu')]
+    ];
+    
+    await ctx.reply(
+      `📹 **Video Calls**\n\n` +
+      `Start or join video calls with your team members.\n\n` +
+      `📞 **Features**:\n` +
+      `• High-quality video calls\n` +
+      `• Screen sharing\n` +
+      `• Call recording\n` +
+      `• Group calls\n\n` +
+      `Choose an option:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+      }
+    );
+  } catch (error) {
+    console.error('Error in video call menu:', error);
+    await ctx.reply('⚠️ An error occurred while loading video call options.');
+  }
+});
 
 // === Flow Handler for free text responses with security ===
 bot.on('text', async (ctx, next) => {
@@ -4763,6 +5040,238 @@ bot.action('back_to_menu', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   await showMainMenu(ctx);
 });
+
+// ===== نظام التواصل الجماعي =====
+
+/**
+ * إنشاء غرفة دردشة جديدة
+ * @param {BigInt|string} facilityId - معرف المنشأة
+ * @param {string} name - اسم الغرفة
+ * @param {string} description - وصف الغرفة (اختياري)
+ * @param {string} type - نوع الغرفة (team, project, support, emergency, private)
+ * @param {BigInt|string} createdBy - معرف منشئ الغرفة
+ * @returns {Promise<Object>} بيانات الغرفة المنشأة
+ */
+async function createChatRoom(facilityId, name, description, type, createdBy) {
+  try {
+    const chatRoom = await prisma.chatRoom.create({
+      data: {
+        facilityId: BigInt(facilityId),
+        name: sanitizeInput(name, 100),
+        description: description ? sanitizeInput(description, 500) : null,
+        type,
+        createdBy: BigInt(createdBy)
+      }
+    });
+    
+    // Add creator as admin
+    await prisma.chatMember.create({
+      data: {
+        chatRoomId: chatRoom.id,
+        userId: BigInt(createdBy),
+        role: 'admin'
+      }
+    });
+    
+    return chatRoom;
+  } catch (error) {
+    console.error('Error creating chat room:', error);
+    throw error;
+  }
+}
+
+/**
+ * إضافة عضو لغرفة الدردشة
+ * @param {BigInt|string} chatRoomId - معرف غرفة الدردشة
+ * @param {BigInt|string} userId - معرف المستخدم
+ * @param {string} role - دور العضو (admin, moderator, member)
+ * @returns {Promise<boolean>} نجح الإضافة أم لا
+ */
+async function addChatMember(chatRoomId, userId, role = 'member') {
+  try {
+    await prisma.chatMember.create({
+      data: {
+        chatRoomId: BigInt(chatRoomId),
+        userId: BigInt(userId),
+        role
+      }
+    });
+    return true;
+  } catch (error) {
+    console.error('Error adding chat member:', error);
+    return false;
+  }
+}
+
+/**
+ * إرسال رسالة في غرفة الدردشة
+ * @param {BigInt|string} chatRoomId - معرف غرفة الدردشة
+ * @param {BigInt|string} userId - معرف المرسل
+ * @param {string} content - محتوى الرسالة
+ * @param {string} messageType - نوع الرسالة (text, image, voice, video, file)
+ * @param {string} mediaUrl - رابط الميديا (اختياري)
+ * @param {BigInt|string} replyToId - معرف الرسالة المرد عليها (اختياري)
+ * @returns {Promise<Object>} بيانات الرسالة المرسلة
+ */
+async function sendChatMessage(chatRoomId, userId, content, messageType = 'text', mediaUrl = null, replyToId = null) {
+  try {
+    const message = await prisma.chatMessage.create({
+      data: {
+        chatRoomId: BigInt(chatRoomId),
+        userId: BigInt(userId),
+        messageType,
+        content: sanitizeInput(content, 2000),
+        mediaUrl,
+        replyToId: replyToId ? BigInt(replyToId) : null
+      }
+    });
+    
+    // Send notification to all room members
+    await notifyChatMembers(chatRoomId, userId, content, messageType);
+    
+    return message;
+  } catch (error) {
+    console.error('Error sending chat message:', error);
+    throw error;
+  }
+}
+
+/**
+ * إرسال إشعار لأعضاء غرفة الدردشة
+ * @param {BigInt|string} chatRoomId - معرف غرفة الدردشة
+ * @param {BigInt|string} senderId - معرف المرسل
+ * @param {string} content - محتوى الرسالة
+ * @param {string} messageType - نوع الرسالة
+ */
+async function notifyChatMembers(chatRoomId, senderId, content, messageType) {
+  try {
+    const members = await prisma.chatMember.findMany({
+      where: { 
+        chatRoomId: BigInt(chatRoomId),
+        isActive: true,
+        userId: { not: BigInt(senderId) } // Don't notify sender
+      },
+      include: { user: true }
+    });
+    
+    const sender = await prisma.user.findUnique({
+      where: { id: BigInt(senderId) }
+    });
+    
+    const messagePreview = content.length > 50 ? content.substring(0, 50) + '...' : content;
+    const typeEmoji = {
+      text: '💬',
+      image: '📸',
+      voice: '🎤',
+      video: '📹',
+      file: '📎',
+      location: '📍',
+      contact: '👤'
+    };
+    
+    for (const member of members) {
+      if (member.user.tgId) {
+        try {
+          const settings = await getUserNotificationSettings(member.userId);
+          if (!settings.teamCommunication) continue;
+          
+          await bot.telegram.sendMessage(
+            member.user.tgId.toString(),
+            `${typeEmoji[messageType] || '💬'} **New message in team chat**\n\n` +
+            `👤 **From**: ${sender.firstName || sender.username || 'Unknown'}\n` +
+            `💬 **Message**: ${messagePreview}\n\n` +
+            `📱 [Open Chat](https://t.me/your_bot_username?start=chat_${chatRoomId})`
+          );
+        } catch (error) {
+          console.error(`Error notifying chat member ${member.userId}:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error notifying chat members:', error);
+  }
+}
+
+/**
+ * الحصول على رسائل غرفة الدردشة
+ * @param {BigInt|string} chatRoomId - معرف غرفة الدردشة
+ * @param {number} limit - عدد الرسائل المطلوبة (افتراضي: 50)
+ * @param {BigInt|string} beforeId - معرف الرسالة للبحث قبلها (اختياري)
+ * @returns {Promise<Array>} قائمة الرسائل
+ */
+async function getChatMessages(chatRoomId, limit = 50, beforeId = null) {
+  try {
+    const where = {
+      chatRoomId: BigInt(chatRoomId),
+      isDeleted: false
+    };
+    
+    if (beforeId) {
+      where.id = { lt: BigInt(beforeId) };
+    }
+    
+    const messages = await prisma.chatMessage.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            username: true
+          }
+        },
+        replyTo: {
+          include: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+                username: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit
+    });
+    
+    return messages.reverse(); // Return in chronological order
+  } catch (error) {
+    console.error('Error getting chat messages:', error);
+    throw error;
+  }
+}
+
+/**
+ * الحصول على غرف الدردشة في المنشأة
+ * @param {BigInt|string} facilityId - معرف المنشأة
+ * @returns {Promise<Array>} قائمة غرف الدردشة
+ */
+async function getFacilityChatRooms(facilityId) {
+  try {
+    const chatRooms = await prisma.chatRoom.findMany({
+      where: {
+        facilityId: BigInt(facilityId),
+        isActive: true
+      },
+      include: {
+        _count: {
+          select: {
+            members: true,
+            messages: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    return chatRooms;
+  } catch (error) {
+    console.error('Error getting facility chat rooms:', error);
+    throw error;
+  }
+}
 
 // === Main Menu Sub-Menus ===
 
