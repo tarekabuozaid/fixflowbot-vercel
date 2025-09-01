@@ -361,6 +361,15 @@ async function showMainMenu(ctx) {
     const buttons = [];
     
     if (user.status === 'active' && user.activeFacilityId) {
+      // Get user membership data
+      const membership = await prisma.facilityMember.findFirst({
+        where: {
+          userId: user.id,
+          facilityId: user.activeFacilityId,
+          status: 'active'
+        }
+      });
+      
       // === MAIN MENU - 4 MAIN BUTTONS ===
       buttons.push([
         Markup.button.callback('🏠 Home', 'menu_home'),
@@ -368,7 +377,7 @@ async function showMainMenu(ctx) {
       ]);
       
       // Check if user is technician to show technician dashboard
-      if (membership.role === 'technician') {
+      if (membership && membership.role === 'technician') {
         buttons.push([
           Markup.button.callback('🔧 Work', 'menu_work'),
           Markup.button.callback('🛠️ My Tasks', 'technician_dashboard')
