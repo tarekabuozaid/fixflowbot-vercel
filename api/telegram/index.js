@@ -367,10 +367,21 @@ async function showMainMenu(ctx) {
         Markup.button.callback('📊 Reports', 'menu_reports')
       ]);
       
-      buttons.push([
-        Markup.button.callback('🔧 Work', 'menu_work'),
-        Markup.button.callback('👑 Admin', 'menu_admin')
-      ]);
+      // Check if user is technician to show technician dashboard
+      if (membership.role === 'technician') {
+        buttons.push([
+          Markup.button.callback('🔧 Work', 'menu_work'),
+          Markup.button.callback('🛠️ My Tasks', 'technician_dashboard')
+        ]);
+        buttons.push([
+          Markup.button.callback('👑 Admin', 'menu_admin')
+        ]);
+      } else {
+        buttons.push([
+          Markup.button.callback('🔧 Work', 'menu_work'),
+          Markup.button.callback('👑 Admin', 'menu_admin')
+        ]);
+      }
       
       // === MASTER SECTION ===
       if (isMaster(ctx)) {
@@ -1513,9 +1524,147 @@ bot.on('text', async (ctx, next) => {
               reply_markup: { inline_keyboard: frequencyButtons }
             }
           );
+                }
+      }
+      
+      // === HELP REQUEST FLOW ===
+      if (flowState.flow === 'request_help') {
+        // Step 1: Problem Description
+        if (flowState.step === 1) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ تم إلغاء طلب المساعدة.', {
+              reply_markup: { inline_keyboard: [[{ text: '💬 التواصل مع الفريق', callback_data: 'team_communication' }]] }
+            });
+          }
+          
+          const sanitizedProblem = SecurityManager.sanitizeInput(text, 500);
+          if (sanitizedProblem.length < 10) {
+            return ctx.reply('⚠️ يرجى وصف المشكلة بتفصيل أكثر (10 أحرف على الأقل). اكتب /cancel للإلغاء.');
+          }
+          
+          FlowManager.updateData(ctx.from.id.toString(), { problem: sanitizedProblem });
+          FlowManager.updateStep(ctx.from.id.toString(), 2);
+          
+          return ctx.reply(
+            `✅ **وصف المشكلة**: ${sanitizedProblem}\n\n` +
+            `⚡ **الخطوة 2/2**: ما مدى إلحاح هذه المشكلة؟\n\n` +
+            `اكتب رقم من 1-5:\n` +
+            `1 = عادي\n` +
+            `2 = مهم\n` +
+            `3 = عاجل\n` +
+            `4 = حرج\n` +
+            `5 = طوارئ`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+        
+        // Step 2: Urgency Level
+        if (flowState.step === 2) {
+          if (text.toLowerCase() === '/cancel') {
+            FlowManager.clearFlow(ctx.from.id.toString());
+            return ctx.reply('❌ تم إلغاء طلب المساعدة.', {
+              reply_markup: { inline_keyboard: [[{ text: '💬 التواصل مع الفريق', callback_data: 'team_communication' }]] }
+            });
+          }
+          
+          const urgencyLevel = parseInt(text);
+          if (isNaN(urgencyLevel) || urgencyLevel < 1 || urgencyLevel > 5) {
+            return ctx.reply('⚠️ يرجى اختيار رقم من 1 إلى 5 فقط. اكتب /cancel للإلغاء.');
+          }
+          
+          const urgencyLabels = {
+            1: 'عادي',
+            2: 'مهم', 
+            3: 'عاجل',
+            4: 'حرج',
+            5: 'طوارئ'
+          };
+          
+          const urgencyEmojis = {
+            1: '🔵',
+            2: '🟡',
+            3: '🟠',
+            4: '🔴',
+            5: '🚨'
+          };
+          
+          FlowManager.updateData(ctx.from.id.toString(), { 
+            urgency: urgencyLevel,
+            urgencyLabel: urgencyLabels[urgencyLevel],
+            urgencyEmoji: urgencyEmojis[urgencyLevel]
+          });
+          
+          // Send help request to supervisors and admins
+          try {
+            const supervisors = await prisma.facilityMember.findMany({
+              where: { 
+                facilityId: BigInt(flowState.data.facilityId), 
+                status: 'active',
+                role: { in: ['facility_admin', 'supervisor'] }
+              },
+              include: { user: true }
+            });
+            
+            const helpMessage = 
+              `🆘 **طلب مساعدة من فني**\n\n` +
+              `👤 **الفني**: ${flowState.data.technicianName}\n` +
+              `${flowState.data.urgencyEmoji} **الإلحاح**: ${flowState.data.urgencyLabel}\n\n` +
+              `📝 **المشكلة**:\n${flowState.data.problem}\n\n` +
+              `📅 **الوقت**: ${new Date().toLocaleString('ar-EG')}`;
+            
+            let sentCount = 0;
+            for (const supervisor of supervisors) {
+              if (supervisor.user.tgId) {
+                try {
+                  await createNotification(
+                    supervisor.user.id,
+                    BigInt(flowState.data.facilityId),
+                    'high_priority_alert',
+                    'طلب مساعدة من فني',
+                    helpMessage,
+                    {
+                      type: 'help_request',
+                      technicianId: flowState.data.technicianId,
+                      urgency: urgencyLevel
+                    }
+                  );
+                  sentCount++;
+                } catch (error) {
+                  console.error(`Error sending help request to supervisor ${supervisor.user.id}:`, error);
+                }
+              }
+            }
+            
+            FlowManager.clearFlow(ctx.from.id.toString());
+            
+            await ctx.reply(
+              `✅ **تم إرسال طلب المساعدة بنجاح!**\n\n` +
+              `📨 تم إرسال الطلب إلى ${sentCount} مشرف/مدير\n` +
+              `${flowState.data.urgencyEmoji} **الإلحاح**: ${flowState.data.urgencyLabel}\n\n` +
+              `سيتم التواصل معك قريباً.`,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      Markup.button.callback('🛠️ لوحة التحكم', 'technician_dashboard'),
+                      Markup.button.callback('💬 التواصل مع الفريق', 'team_communication')
+                    ],
+                    [Markup.button.callback('🔙 القائمة الرئيسية', 'back_to_menu')]
+                  ]
+                }
+              }
+            );
+            
+          } catch (error) {
+            console.error('Error sending help request:', error);
+            FlowManager.clearFlow(ctx.from.id.toString());
+            await ctx.reply('⚠️ حدث خطأ أثناء إرسال طلب المساعدة. يرجى المحاولة مرة أخرى.');
+          }
         }
       }
-
+      
       // === WORK ORDER SEARCH FLOW ===
       if (flowState.flow === 'wo_search') {
         if (flowState.step === 1) {
@@ -4039,6 +4188,130 @@ bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dai
   }
 });
 
+// ===== نظام إدارة الفريق وتعيين المهام =====
+
+/**
+ * الحصول على قائمة الفنيين المتاحين في المنشأة
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @returns {Promise<Array>} قائمة الفنيين المتاحين
+ */
+async function getAvailableTechnicians(facilityId) {
+  try {
+    const technicians = await prisma.facilityMember.findMany({
+      where: { 
+        facilityId: BigInt(facilityId), 
+        role: 'technician',
+        status: 'active'
+      },
+      include: { 
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            jobTitle: true,
+            tgId: true
+          }
+        }
+      }
+    });
+    return technicians;
+  } catch (error) {
+    console.error('Error getting available technicians:', error);
+    return [];
+  }
+}
+
+/**
+ * تعيين ورك أوردر لفني محدد
+ * @param {BigInt} workOrderId - معرف الورك أوردر
+ * @param {BigInt} technicianUserId - معرف الفني
+ * @param {BigInt} assignedByUserId - معرف المستخدم الذي قام بالتعيين
+ * @returns {Promise<boolean>} نجح التعيين أم لا
+ */
+async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assignedByUserId) {
+  try {
+    // تحديث الورك أوردر
+    await prisma.workOrder.update({
+      where: { id: BigInt(workOrderId) },
+      data: { 
+        assignee: technicianUserId.toString(),
+        status: 'in_progress',
+        updatedAt: new Date()
+      }
+    });
+
+    // إضافة سجل في تاريخ الحالة
+    await prisma.statusHistory.create({
+      data: {
+        workOrderId: BigInt(workOrderId),
+        oldStatus: 'open',
+        newStatus: 'in_progress',
+        updatedByUserId: BigInt(assignedByUserId)
+      }
+    });
+
+    // إرسال إشعار للفني
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: BigInt(workOrderId) },
+      include: { facility: true }
+    });
+
+    await createNotification(
+      technicianUserId,
+      workOrder.facilityId,
+      'work_order_assigned',
+      'تم تعيين مهمة جديدة لك',
+      `تم تعيين الورك أوردر #${workOrderId} لك في ${workOrder.facility.name}\n\nالوصف: ${workOrder.description}`,
+      { workOrderId: workOrderId.toString() }
+    );
+
+    return true;
+  } catch (error) {
+    console.error('Error assigning work order:', error);
+    return false;
+  }
+}
+
+/**
+ * الحصول على إحصائيات الفني
+ * @param {BigInt} technicianUserId - معرف الفني
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @returns {Promise<Object>} إحصائيات الفني
+ */
+async function getTechnicianStats(technicianUserId, facilityId) {
+  try {
+    const stats = await prisma.workOrder.groupBy({
+      by: ['status'],
+      where: {
+        assignee: technicianUserId.toString(),
+        facilityId: BigInt(facilityId)
+      },
+      _count: {
+        status: true
+      }
+    });
+
+    const result = {
+      total: 0,
+      open: 0,
+      in_progress: 0,
+      done: 0,
+      closed: 0
+    };
+
+    stats.forEach(stat => {
+      result[stat.status] = stat._count.status;
+      result.total += stat._count.status;
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Error getting technician stats:', error);
+    return { total: 0, open: 0, in_progress: 0, done: 0, closed: 0 };
+  }
+}
+
 // ===== نظام التذكيرات =====
 /**
  * إنشاء تذكير جديد
@@ -4622,6 +4895,10 @@ bot.action('menu_admin', async (ctx) => {
         Markup.button.callback('👥 Manage Members', 'manage_members')
       ],
       [
+        Markup.button.callback('🔧 Team Management', 'team_management'),
+        Markup.button.callback('📋 Assign Tasks', 'assign_tasks')
+      ],
+      [
         Markup.button.callback('🔐 Role Management', 'role_management'),
         Markup.button.callback('🤖 Smart Alerts', 'smart_notifications')
       ],
@@ -4639,6 +4916,692 @@ bot.action('menu_admin', async (ctx) => {
   } catch (error) {
     console.error('Error in admin menu:', error);
     await ctx.reply('⚠️ An error occurred while loading admin menu.');
+  }
+});
+
+// ===== إدارة الفريق =====
+
+// Team Management Menu
+bot.action('team_management', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    // التحقق من الصلاحيات
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن للوصول لإدارة الفريق.');
+    }
+
+    // الحصول على إحصائيات الفريق
+    const teamStats = await prisma.facilityMember.groupBy({
+      by: ['role'],
+      where: { facilityId: user.activeFacilityId, status: 'active' },
+      _count: { role: true }
+    });
+
+    const stats = {
+      facility_admin: 0,
+      supervisor: 0,
+      technician: 0,
+      user: 0
+    };
+
+    teamStats.forEach(stat => {
+      stats[stat.role] = stat._count.role;
+    });
+
+    const totalMembers = Object.values(stats).reduce((sum, count) => sum + count, 0);
+
+    const teamMessage = 
+      `🔧 **إدارة الفريق**\n\n` +
+      `👥 **إجمالي الأعضاء**: ${totalMembers}\n\n` +
+      `👑 **المدراء**: ${stats.facility_admin}\n` +
+      `👨‍💼 **المشرفين**: ${stats.supervisor}\n` +
+      `🔧 **الفنيين**: ${stats.technician}\n` +
+      `👤 **المستخدمين**: ${stats.user}\n\n` +
+      `اختر عملية:`;
+
+    const buttons = [
+      [
+        Markup.button.callback('👥 عرض الفريق', 'view_team'),
+        Markup.button.callback('📊 إحصائيات الفنيين', 'technician_stats')
+      ],
+      [
+        Markup.button.callback('🔄 تغيير أدوار', 'change_roles'),
+        Markup.button.callback('📋 توزيع المهام', 'workload_distribution')
+      ],
+      [Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')]
+    ];
+
+    await ctx.reply(teamMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in team management:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء تحميل إدارة الفريق.');
+  }
+});
+
+// View Team Members
+bot.action('view_team', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+    }
+
+    const members = await prisma.facilityMember.findMany({
+      where: { facilityId: user.activeFacilityId, status: 'active' },
+      include: { user: true },
+      orderBy: [
+        { role: 'asc' },
+        { user: { firstName: 'asc' } }
+      ]
+    });
+
+    let teamMessage = `👥 **فريق العمل - ${facility.name}**\n\n`;
+
+    const roleEmojis = {
+      facility_admin: '👑',
+      supervisor: '👨‍💼',
+      technician: '🔧',
+      user: '👤'
+    };
+
+    const roleNames = {
+      facility_admin: 'مدير المنشأة',
+      supervisor: 'مشرف',
+      technician: 'فني',
+      user: 'مستخدم'
+    };
+
+    members.forEach((member, index) => {
+      const firstName = member.user.firstName || `مستخدم ${member.user.tgId?.toString() || member.user.id.toString()}`;
+      const fullName = member.user.lastName ? `${firstName} ${member.user.lastName}` : firstName;
+      const jobTitle = member.user.jobTitle ? ` - ${member.user.jobTitle}` : '';
+      
+      teamMessage += `${index + 1}. ${roleEmojis[member.role]} **${fullName}**${jobTitle}\n`;
+      teamMessage += `   📋 الدور: ${roleNames[member.role]}\n`;
+      teamMessage += `   📅 انضم في: ${member.joinedAt.toLocaleDateString('ar-EG')}\n\n`;
+    });
+
+    const buttons = [
+      [
+        Markup.button.callback('🔧 عرض الفنيين فقط', 'view_technicians'),
+        Markup.button.callback('👨‍💼 عرض المشرفين', 'view_supervisors')
+      ],
+      [Markup.button.callback('🔙 العودة لإدارة الفريق', 'team_management')]
+    ];
+
+    await ctx.reply(teamMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error viewing team:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء عرض الفريق.');
+  }
+});
+
+// Technician Stats
+bot.action('technician_stats', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+    }
+
+    const technicians = await getAvailableTechnicians(user.activeFacilityId);
+    
+    if (technicians.length === 0) {
+      return ctx.reply('ℹ️ لا يوجد فنيين في المنشأة حالياً.', {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 العودة', 'team_management')]]
+        }
+      });
+    }
+
+    let statsMessage = `📊 **إحصائيات الفنيين - ${facility.name}**\n\n`;
+
+    for (const technician of technicians) {
+      const stats = await getTechnicianStats(technician.user.id, user.activeFacilityId);
+      const firstName = technician.user.firstName || `فني ${technician.user.tgId?.toString()}`;
+      const fullName = technician.user.lastName ? `${firstName} ${technician.user.lastName}` : firstName;
+      
+      statsMessage += `🔧 **${fullName}**\n`;
+      statsMessage += `   📋 إجمالي المهام: ${stats.total}\n`;
+      statsMessage += `   🔄 قيد التنفيذ: ${stats.in_progress}\n`;
+      statsMessage += `   ✅ مكتملة: ${stats.done}\n`;
+      statsMessage += `   📂 مغلقة: ${stats.closed}\n\n`;
+    }
+
+    const buttons = [
+      [
+        Markup.button.callback('📋 توزيع المهام', 'workload_distribution'),
+        Markup.button.callback('🔄 تحديث الإحصائيات', 'technician_stats')
+      ],
+      [Markup.button.callback('🔙 العودة لإدارة الفريق', 'team_management')]
+    ];
+
+    await ctx.reply(statsMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error getting technician stats:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء جلب إحصائيات الفنيين.');
+  }
+});
+
+// Task Assignment Menu
+bot.action('assign_tasks', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن لتعيين المهام.');
+    }
+
+    // الحصول على البلاغات غير المعينة
+    const unassignedWorkOrders = await prisma.workOrder.findMany({
+      where: { 
+        facilityId: user.activeFacilityId,
+        status: 'open',
+        assignee: null
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    });
+
+    if (unassignedWorkOrders.length === 0) {
+      return ctx.reply('ℹ️ لا توجد مهام غير معينة حالياً.', {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')]]
+        }
+      });
+    }
+
+    let tasksMessage = `📋 **تعيين المهام - ${facility.name}**\n\n`;
+    tasksMessage += `📊 **البلاغات غير المعينة**: ${unassignedWorkOrders.length}\n\n`;
+
+    const buttons = [];
+    
+    unassignedWorkOrders.forEach((wo, index) => {
+      const shortDesc = wo.description.length > 30 ? 
+        wo.description.substring(0, 30) + '...' : wo.description;
+      
+      buttons.push([
+        Markup.button.callback(
+          `#${wo.id} - ${shortDesc}`,
+          `assign_wo_${wo.id}`
+        )
+      ]);
+    });
+
+    buttons.push([
+      Markup.button.callback('🔄 تحديث القائمة', 'assign_tasks'),
+      Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')
+    ]);
+
+    tasksMessage += `اختر بلاغ لتعيينه:`;
+
+    await ctx.reply(tasksMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in assign tasks:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء تحميل مهام التعيين.');
+  }
+});
+
+// Assign specific work order
+bot.action(/assign_wo_(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+    }
+
+    const workOrderId = ctx.match[1];
+    
+    // التحقق من وجود البلاغ
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: BigInt(workOrderId) },
+      include: { facility: true }
+    });
+
+    if (!workOrder || workOrder.facilityId !== user.activeFacilityId) {
+      return ctx.reply('⚠️ البلاغ غير موجود أو لا تملك صلاحية للوصول إليه.');
+    }
+
+    if (workOrder.assignee) {
+      return ctx.reply('⚠️ هذا البلاغ معين بالفعل لفني آخر.');
+    }
+
+    // الحصول على الفنيين المتاحين
+    const technicians = await getAvailableTechnicians(user.activeFacilityId);
+    
+    if (technicians.length === 0) {
+      return ctx.reply('⚠️ لا يوجد فنيين متاحين حالياً.', {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 العودة', 'assign_tasks')]]
+        }
+      });
+    }
+
+    let assignMessage = `🔧 **تعيين البلاغ #${workOrderId}**\n\n`;
+    assignMessage += `📝 **الوصف**: ${workOrder.description}\n`;
+    assignMessage += `📍 **الموقع**: ${workOrder.location || 'غير محدد'}\n`;
+    assignMessage += `⚡ **الأولوية**: ${workOrder.priority || 'عادية'}\n\n`;
+    assignMessage += `👥 **اختر الفني المناسب**:`;
+
+    const buttons = [];
+    
+    for (const technician of technicians) {
+      const firstName = technician.user.firstName || `فني ${technician.user.tgId?.toString()}`;
+      const fullName = technician.user.lastName ? `${firstName} ${technician.user.lastName}` : firstName;
+      const jobTitle = technician.user.jobTitle ? ` - ${technician.user.jobTitle}` : '';
+      
+      // الحصول على إحصائيات سريعة
+      const stats = await getTechnicianStats(technician.user.id, user.activeFacilityId);
+      
+      buttons.push([
+        Markup.button.callback(
+          `🔧 ${fullName}${jobTitle} (${stats.in_progress} مهمة نشطة)`,
+          `do_assign_${workOrderId}_${technician.user.id}`
+        )
+      ]);
+    }
+
+    buttons.push([Markup.button.callback('🔙 العودة للقائمة', 'assign_tasks')]);
+
+    await ctx.reply(assignMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error showing assignment options:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء عرض خيارات التعيين.');
+  }
+});
+
+// Execute assignment
+bot.action(/do_assign_(\d+)_(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (!['facility_admin', 'supervisor'].includes(membership.role)) {
+      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+    }
+
+    const workOrderId = BigInt(ctx.match[1]);
+    const technicianUserId = BigInt(ctx.match[2]);
+
+    // تنفيذ التعيين
+    const success = await assignWorkOrderToTechnician(workOrderId, technicianUserId, user.id);
+
+    if (success) {
+      // الحصول على اسم الفني
+      const technician = await prisma.user.findUnique({
+        where: { id: technicianUserId },
+        select: { firstName: true, lastName: true }
+      });
+
+      const techName = technician ? 
+        (technician.lastName ? `${technician.firstName} ${technician.lastName}` : technician.firstName) : 
+        `الفني ${technicianUserId}`;
+
+      await ctx.reply(
+        `✅ **تم التعيين بنجاح!**\n\n` +
+        `🔧 تم تعيين البلاغ #${workOrderId} للفني: ${techName}\n` +
+        `📱 تم إرسال إشعار للفني\n` +
+        `🔄 تم تحديث حالة البلاغ إلى "قيد التنفيذ"`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                Markup.button.callback('📋 تعيين مهمة أخرى', 'assign_tasks'),
+                Markup.button.callback('👥 إدارة الفريق', 'team_management')
+              ],
+              [Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')]
+            ]
+          }
+        }
+      );
+    } else {
+      await ctx.reply('⚠️ حدث خطأ أثناء تعيين المهمة. يرجى المحاولة مرة أخرى.', {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 العودة', 'assign_tasks')]]
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error executing assignment:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء تعيين المهمة.');
+  }
+});
+
+// ===== لوحة تحكم الفنيين =====
+
+// Technician Dashboard
+bot.action('technician_dashboard', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (membership.role !== 'technician') {
+      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+    }
+
+    // الحصول على مهام الفني
+    const myTasks = await prisma.workOrder.findMany({
+      where: { 
+        assignee: user.id.toString(),
+        facilityId: user.activeFacilityId
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 10
+    });
+
+    // إحصائيات الفني
+    const stats = await getTechnicianStats(user.id, user.activeFacilityId);
+
+    let dashboardMessage = `🛠️ **لوحة تحكم الفني**\n\n`;
+    dashboardMessage += `👤 **الفني**: ${user.firstName || 'غير محدد'}\n`;
+    dashboardMessage += `🏢 **المنشأة**: ${facility.name}\n\n`;
+    
+    dashboardMessage += `📊 **إحصائياتي**:\n`;
+    dashboardMessage += `📋 إجمالي المهام: ${stats.total}\n`;
+    dashboardMessage += `🔄 قيد التنفيذ: ${stats.in_progress}\n`;
+    dashboardMessage += `✅ مكتملة: ${stats.done}\n`;
+    dashboardMessage += `📂 مغلقة: ${stats.closed}\n\n`;
+
+    if (myTasks.length > 0) {
+      dashboardMessage += `🔧 **مهامي الحالية** (آخر ${myTasks.length} مهام):\n\n`;
+      
+      myTasks.forEach((task, index) => {
+        const statusEmoji = {
+          'open': '🔵',
+          'in_progress': '🟡',
+          'done': '✅',
+          'closed': '⚫'
+        };
+        
+        const shortDesc = task.description.length > 25 ? 
+          task.description.substring(0, 25) + '...' : task.description;
+        
+        dashboardMessage += `${index + 1}. ${statusEmoji[task.status]} #${task.id} - ${shortDesc}\n`;
+      });
+    } else {
+      dashboardMessage += `ℹ️ لا توجد مهام معينة لك حالياً.`;
+    }
+
+    const buttons = [
+      [
+        Markup.button.callback('📋 مهامي النشطة', 'my_active_tasks'),
+        Markup.button.callback('📊 تقاريري', 'my_reports')
+      ],
+      [
+        Markup.button.callback('✅ تحديث حالة مهمة', 'update_task_status'),
+        Markup.button.callback('💬 التواصل مع الفريق', 'team_communication')
+      ],
+      [
+        Markup.button.callback('🔄 تحديث اللوحة', 'technician_dashboard'),
+        Markup.button.callback('🔙 القائمة الرئيسية', 'back_to_menu')
+      ]
+    ];
+
+    await ctx.reply(dashboardMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in technician dashboard:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء تحميل لوحة التحكم.');
+  }
+});
+
+// My Active Tasks
+bot.action('my_active_tasks', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (membership.role !== 'technician') {
+      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+    }
+
+    const activeTasks = await prisma.workOrder.findMany({
+      where: { 
+        assignee: user.id.toString(),
+        facilityId: user.activeFacilityId,
+        status: { in: ['in_progress', 'open'] }
+      },
+      orderBy: { updatedAt: 'desc' }
+    });
+
+    if (activeTasks.length === 0) {
+      return ctx.reply('ℹ️ لا توجد مهام نشطة حالياً.', {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 العودة', 'technician_dashboard')]]
+        }
+      });
+    }
+
+    let tasksMessage = `📋 **مهامي النشطة** (${activeTasks.length} مهمة)\n\n`;
+
+    const buttons = [];
+    
+    activeTasks.forEach((task, index) => {
+      const statusEmoji = {
+        'open': '🔵',
+        'in_progress': '🟡'
+      };
+      
+      const shortDesc = task.description.length > 30 ? 
+        task.description.substring(0, 30) + '...' : task.description;
+      
+      tasksMessage += `${index + 1}. ${statusEmoji[task.status]} **#${task.id}**\n`;
+      tasksMessage += `   📝 ${shortDesc}\n`;
+      tasksMessage += `   📍 ${task.location || 'غير محدد'}\n`;
+      tasksMessage += `   ⚡ ${task.priority || 'عادية'}\n\n`;
+      
+      buttons.push([
+        Markup.button.callback(
+          `🔧 العمل على #${task.id}`,
+          `work_on_task_${task.id}`
+        )
+      ]);
+    });
+
+    buttons.push([
+      Markup.button.callback('🔄 تحديث القائمة', 'my_active_tasks'),
+      Markup.button.callback('🔙 العودة', 'technician_dashboard')
+    ]);
+
+    await ctx.reply(tasksMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error showing active tasks:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء عرض المهام النشطة.');
+  }
+});
+
+// Work on specific task
+bot.action(/work_on_task_(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (membership.role !== 'technician') {
+      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+    }
+
+    const taskId = ctx.match[1];
+    
+    const task = await prisma.workOrder.findUnique({
+      where: { id: BigInt(taskId) },
+      include: { byUser: true }
+    });
+
+    if (!task || task.assignee !== user.id.toString()) {
+      return ctx.reply('⚠️ المهمة غير موجودة أو غير معينة لك.');
+    }
+
+    const createdBy = task.byUser ? 
+      (task.byUser.lastName ? `${task.byUser.firstName} ${task.byUser.lastName}` : task.byUser.firstName) : 
+      'غير محدد';
+
+    let taskMessage = `🔧 **المهمة #${taskId}**\n\n`;
+    taskMessage += `📝 **الوصف**: ${task.description}\n`;
+    taskMessage += `📍 **الموقع**: ${task.location || 'غير محدد'}\n`;
+    taskMessage += `⚡ **الأولوية**: ${task.priority || 'عادية'}\n`;
+    taskMessage += `🏢 **القسم**: ${task.department || 'غير محدد'}\n`;
+    taskMessage += `🔧 **المعدة**: ${task.equipment || 'غير محدد'}\n`;
+    taskMessage += `👤 **طلب بواسطة**: ${createdBy}\n`;
+    taskMessage += `📅 **تاريخ الإنشاء**: ${task.createdAt.toLocaleDateString('ar-EG')}\n`;
+    taskMessage += `📊 **الحالة الحالية**: ${task.status}\n\n`;
+    
+    if (task.notes) {
+      taskMessage += `📝 **ملاحظات**: ${task.notes}\n\n`;
+    }
+
+    const buttons = [
+      [
+        Markup.button.callback('✅ إكمال المهمة', `complete_task_${taskId}`),
+        Markup.button.callback('📝 إضافة ملاحظة', `add_note_${taskId}`)
+      ],
+      [
+        Markup.button.callback('📸 إضافة صورة', `add_image_${taskId}`),
+        Markup.button.callback('💬 التواصل حول المهمة', `task_communication_${taskId}`)
+      ],
+      [
+        Markup.button.callback('🔄 تحديث الحالة', `update_status_${taskId}`),
+        Markup.button.callback('🔙 العودة للمهام', 'my_active_tasks')
+      ]
+    ];
+
+    await ctx.reply(taskMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error showing task details:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء عرض تفاصيل المهمة.');
+  }
+});
+
+// Team Communication
+bot.action('team_communication', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+
+    // Get team members (supervisors and admins)
+    const teamMembers = await prisma.facilityMember.findMany({
+      where: { 
+        facilityId: user.activeFacilityId, 
+        status: 'active',
+        role: { in: ['facility_admin', 'supervisor'] }
+      },
+      include: { user: true }
+    });
+
+    if (teamMembers.length === 0) {
+      return ctx.reply('ℹ️ لا يوجد مشرفين متاحين للتواصل.', {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 العودة', 'technician_dashboard')]]
+        }
+      });
+    }
+
+    let communicationMessage = `💬 **التواصل مع الفريق**\n\n`;
+    communicationMessage += `🏢 **المنشأة**: ${facility.name}\n`;
+    communicationMessage += `👤 **أنت**: ${user.firstName || 'فني'} (فني)\n\n`;
+    communicationMessage += `👥 **المتاحين للتواصل**:\n\n`;
+
+    const buttons = [];
+    
+    teamMembers.forEach((member, index) => {
+      const roleEmoji = {
+        'facility_admin': '👑',
+        'supervisor': '👨‍💼'
+      };
+      
+      const firstName = member.user.firstName || `مستخدم ${member.user.tgId?.toString()}`;
+      const fullName = member.user.lastName ? `${firstName} ${member.user.lastName}` : firstName;
+      
+      communicationMessage += `${index + 1}. ${roleEmoji[member.role]} ${fullName}\n`;
+      
+      buttons.push([
+        Markup.button.callback(
+          `💬 مراسلة ${fullName}`,
+          `message_member_${member.user.id}`
+        )
+      ]);
+    });
+
+    buttons.push([
+      Markup.button.callback('📢 رسالة للجميع', 'broadcast_to_team'),
+      Markup.button.callback('❓ طلب مساعدة', 'request_help')
+    ]);
+    
+    buttons.push([Markup.button.callback('🔙 العودة', 'technician_dashboard')]);
+
+    await ctx.reply(communicationMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  } catch (error) {
+    console.error('Error in team communication:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء تحميل التواصل مع الفريق.');
+  }
+});
+
+// Request Help
+bot.action('request_help', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const { user, facility, membership } = await requireActiveMembership(ctx);
+    
+    if (membership.role !== 'technician') {
+      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+    }
+
+    // Start help request flow
+    FlowManager.setFlow(user.tgId.toString(), 'request_help', 1, {
+      facilityId: user.activeFacilityId.toString(),
+      technicianId: user.id.toString(),
+      technicianName: user.firstName || 'فني'
+    });
+
+    await ctx.reply(
+      `🆘 **طلب مساعدة**\n\n` +
+      `يمكنك طلب المساعدة من المشرفين والإدارة.\n\n` +
+      `📝 **الخطوة 1/2**: اكتب وصف المشكلة التي تحتاج مساعدة فيها:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('❌ إلغاء', 'team_communication')]]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error in request help:', error);
+    await ctx.reply('⚠️ حدث خطأ أثناء طلب المساعدة.');
   }
 });
 
