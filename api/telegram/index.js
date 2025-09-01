@@ -1749,38 +1749,52 @@ bot.action(/wo_type\|(maintenance|repair|installation|cleaning|inspection|other)
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    const { user } = await SecurityManager.authenticateUser(ctx);
-    
-    const flowState = FlowManager.getFlow(ctx.from.id.toString());
-    if (!flowState || flowState.flow !== 'wo_new') {
-      return ctx.reply('⚠️ Invalid flow state. Please start over.');
-    }
-    
-    // Validate flow ownership
-    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+    try {
+      console.log(`wo_type handler called for user ${ctx.from.id} with type: ${ctx.match[1]}`);
+      
+      const { user } = await SecurityManager.authenticateUser(ctx);
+      console.log(`User authenticated:`, user);
+      
+      const flowState = FlowManager.getFlow(ctx.from.id.toString());
+      console.log(`Flow state retrieved:`, flowState);
+      
+      if (!flowState || flowState.flow !== 'wo_new') {
+        console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+        return ctx.reply('⚠️ Invalid flow state. Please start over.');
+      }
+      
+      // Validate flow ownership
+      if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+        console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+        FlowManager.clearFlow(ctx.from.id.toString());
+        return ctx.reply('⚠️ Session expired. Please start over.');
+      }
+      
+      console.log(`Updating flow data for user ${ctx.from.id} with typeOfWork: ${ctx.match[1]}`);
+      FlowManager.updateData(ctx.from.id.toString(), { typeOfWork: ctx.match[1] });
+      FlowManager.updateStep(ctx.from.id.toString(), 2);
+      
+      // Step 2: Choose service type
+      const serviceTypeButtons = [
+        [Markup.button.callback('⚡ Electrical', 'wo_service|electrical')],
+        [Markup.button.callback('🔧 Mechanical', 'wo_service|mechanical')],
+        [Markup.button.callback('🚰 Plumbing', 'wo_service|plumbing')],
+        [Markup.button.callback('❄️ HVAC', 'wo_service|hvac')],
+        [Markup.button.callback('🏗️ Structural', 'wo_service|structural')],
+        [Markup.button.callback('💻 IT/Technology', 'wo_service|it')],
+        [Markup.button.callback('🧹 General', 'wo_service|general')],
+        [Markup.button.callback('❌ Cancel', 'wo_cancel')]
+      ];
+      
+      await ctx.reply(`🔧 **Work Order Creation (2/6)**\n\n✅ **Type:** ${ctx.match[1]}\n\n**Choose the service type:**`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: serviceTypeButtons }
+      });
+    } catch (error) {
+      console.error('Error in wo_type:', error);
       FlowManager.clearFlow(ctx.from.id.toString());
-      return ctx.reply('⚠️ Session expired. Please start over.');
+      await ctx.reply('⚠️ An error occurred. Please start over.');
     }
-    
-    FlowManager.updateData(ctx.from.id.toString(), { typeOfWork: ctx.match[1] });
-    FlowManager.updateStep(ctx.from.id.toString(), 2);
-    
-    // Step 2: Choose service type
-    const serviceTypeButtons = [
-      [Markup.button.callback('⚡ Electrical', 'wo_service|electrical')],
-      [Markup.button.callback('🔧 Mechanical', 'wo_service|mechanical')],
-      [Markup.button.callback('🚰 Plumbing', 'wo_service|plumbing')],
-      [Markup.button.callback('❄️ HVAC', 'wo_service|hvac')],
-      [Markup.button.callback('🏗️ Structural', 'wo_service|structural')],
-      [Markup.button.callback('💻 IT/Technology', 'wo_service|it')],
-      [Markup.button.callback('🧹 General', 'wo_service|general')],
-      [Markup.button.callback('❌ Cancel', 'wo_cancel')]
-    ];
-    
-    await ctx.reply(`🔧 **Work Order Creation (2/6)**\n\n✅ **Type:** ${ctx.match[1]}\n\n**Choose the service type:**`, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: serviceTypeButtons }
-    });
   }, ctx, 'wo_type_selection');
 });
 

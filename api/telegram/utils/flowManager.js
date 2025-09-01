@@ -17,7 +17,7 @@
  * - register_user: تسجيل مستخدم عادي
  * - register_technician: تسجيل فني
  * - register_supervisor: تسجيل مشرف
- * - work_order_new: إنشاء طلب صيانة جديد
+ * - wo_new: إنشاء طلب صيانة جديد
  * - reminder_new: إنشاء تذكير جديد
  * 
  * تاريخ آخر تحديث: 31 أغسطس 2025
@@ -39,13 +39,15 @@ class FlowManager {
    * @param {Object} data - Flow data
    */
   static setFlow(userId, flow, step, data = {}) {
-    flows.set(userId.toString(), { 
+    const flowData = { 
       flow, 
       step, 
       data, 
       userId: userId.toString(),
       timestamp: Date.now() 
-    });
+    };
+    flows.set(userId.toString(), flowData);
+    console.log(`FlowManager: Set flow for user ${userId}`, flowData);
   }
 
   /**
@@ -54,7 +56,9 @@ class FlowManager {
    * @returns {Object|null} Flow state or null if not found
    */
   static getFlow(userId) {
-    return flows.get(userId.toString());
+    const flow = flows.get(userId.toString());
+    console.log(`FlowManager: Get flow for user ${userId}`, flow);
+    return flow;
   }
 
   /**
@@ -68,6 +72,9 @@ class FlowManager {
       flow.step = step;
       flow.timestamp = Date.now();
       flows.set(userId.toString(), flow);
+      console.log(`FlowManager: Updated step for user ${userId} to ${step}`, flow);
+    } else {
+      console.error(`FlowManager: Cannot update step for user ${userId} - flow not found`);
     }
   }
 
@@ -82,6 +89,9 @@ class FlowManager {
       flow.data = { ...flow.data, ...data };
       flow.timestamp = Date.now();
       flows.set(userId.toString(), flow);
+      console.log(`FlowManager: Updated data for user ${userId}`, data, 'New flow state:', flow);
+    } else {
+      console.error(`FlowManager: Cannot update data for user ${userId} - flow not found`);
     }
   }
 
