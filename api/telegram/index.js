@@ -873,24 +873,48 @@ bot.action('wo_new', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   
   return ErrorHandler.safeExecute(async () => {
-    const { user } = await requireActiveMembership(ctx);
-    
-    // Create flow state using FlowManager
-    FlowManager.setFlow(ctx.from.id.toString(), 'wo_new', 1, {});
-    
-    // Step 1: Choose work type
-    const workTypeButtons = [
-      [Markup.button.callback('🔧 Maintenance', 'wo_type|maintenance')],
-      [Markup.button.callback('🔨 Repair', 'wo_type|repair')],
-      [Markup.button.callback('🛠️ Installation', 'wo_type|installation')],
-      [Markup.button.callback('🧹 Cleaning', 'wo_type|cleaning')],
-      [Markup.button.callback('📋 Inspection', 'wo_type|inspection')],
-      [Markup.button.callback('⚡ Other', 'wo_type|other')]
-    ];
-    
-    await ctx.reply('🔧 Work Order Creation (1/6)\nChoose the type of work:', {
-      reply_markup: { inline_keyboard: workTypeButtons }
-    });
+    try {
+      const { user } = await requireActiveMembership(ctx);
+      
+      // Create flow state using FlowManager
+      FlowManager.setFlow(ctx.from.id.toString(), 'wo_new', 1, {});
+      
+      // Step 1: Choose work type
+      const workTypeButtons = [
+        [Markup.button.callback('🔧 Maintenance', 'wo_type|maintenance')],
+        [Markup.button.callback('🔨 Repair', 'wo_type|repair')],
+        [Markup.button.callback('🛠️ Installation', 'wo_type|installation')],
+        [Markup.button.callback('🧹 Cleaning', 'wo_type|cleaning')],
+        [Markup.button.callback('📋 Inspection', 'wo_type|inspection')],
+        [Markup.button.callback('⚡ Other', 'wo_type|other')]
+      ];
+      
+      await ctx.reply('🔧 Work Order Creation (1/6)\nChoose the type of work:', {
+        reply_markup: { inline_keyboard: workTypeButtons }
+      });
+    } catch (error) {
+      console.error('Error in wo_new:', error);
+      
+      if (error.message === 'no_active_facility') {
+        await ctx.reply(
+          `⚠️ **No Active Facility**\n\n` +
+          `You need to be a member of a facility to create work orders.\n\n` +
+          `Please register or join a facility first.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.callback('🏢 Register Facility', 'reg_fac_start')],
+                [Markup.button.callback('🔗 Join Facility', 'join_fac_start')],
+                [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+              ]
+            }
+          }
+        );
+      } else {
+        await ctx.reply('⚠️ An error occurred while creating work order. Please try again.');
+      }
+    }
   }, ctx, 'wo_new');
 });
 
