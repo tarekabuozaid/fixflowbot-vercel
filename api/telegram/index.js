@@ -39,7 +39,7 @@ if (process.env.NODE_ENV !== 'production') {
   try {
     require('dotenv').config();
   } catch (_) {
-    // dotenv is optional; ignore if not installed
+    // dotenv is اختياري; ignore if not installed
   }
 }
 
@@ -73,23 +73,23 @@ const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;        // Number of a
 const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;  // Time window (in milliseconds)
 
 /**
- * Clean user input
- * @param {string} input - Input text
- * @param {number} maxLength - Maximum length (default: 1000)
- * @returns {string} Cleaned text
+ * تنظيف المدخلات من المستخدمين
+ * @param {string} input - النص المدخل
+ * @param {number} maxLength - الحد الأقصى للطول (افتراضي: 1000)
+ * @returns {string} النص المنظف
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 function sanitizeInput(input, maxLength = 1000) {
   return SecurityManager.sanitizeInput(input, maxLength);
 }
 
 /**
- * Authenticate user
- * @param {Object} ctx - Telegram request context
- * @returns {Promise<Object>} User data
+ * التحقق من هوية المستخدم
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 async function authenticateUser(ctx) {
   try {
@@ -101,13 +101,13 @@ async function authenticateUser(ctx) {
 }
 
 /**
- * Validate facility access
- * @param {Object} ctx - Telegram request context
- * @param {BigInt} facilityId - Facility ID
- * @param {Array} requiredRoles - Required roles
- * @returns {Promise<Object>} Validation result
+ * التحقق من صلاحية الوصول للمنشأة
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @param {Array} requiredRoles - الأدوار المطلوبة
+ * @returns {Promise<Object>} نتيجة التحقق
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
   try {
@@ -119,13 +119,13 @@ async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
 }
 
 /**
- * Validate work order access
- * @param {Object} ctx - Telegram request context
- * @param {BigInt} workOrderId - Work order ID
- * @param {Array} requiredRoles - Required roles
- * @returns {Promise<Object>} Validation result
+ * التحقق من صلاحية الوصول لطلب الصيانة
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @param {BigInt} workOrderId - معرف طلب الصيانة
+ * @param {Array} requiredRoles - الأدوار المطلوبة
+ * @returns {Promise<Object>} نتيجة التحقق
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
   try {
@@ -137,11 +137,11 @@ async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
 }
 
 /**
- * Validate master access
- * @param {Object} ctx - Telegram request context
- * @returns {boolean} true if user is master
+ * التحقق من صلاحيات الماستر
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {boolean} true إذا كان المستخدم ماستر
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 function validateMasterAccess(ctx) {
   try {
@@ -152,28 +152,28 @@ function validateMasterAccess(ctx) {
   }
 }
 
-// ===== Subscription plans and limits =====
+// ===== خطط الاشتراك والحدود =====
 /**
- * Different subscription plan limits
+ * حدود خطط الاشتراك المختلفة
  * 
- * Free: Free plan - suitable for small facilities
- * Pro: Pro plan - suitable for medium facilities
- * Business: Business plan - suitable for large facilities
+ * Free: الخطة المجانية - مناسبة للمنشآت الصغيرة
+ * Pro: الخطة الاحترافية - مناسبة للمنشآت المتوسطة
+ * Business: الخطة التجارية - مناسبة للمنشآت الكبيرة
  * 
- * Note: These limits are checked via PlanManager
+ * ملاحظة: هذه الحدود يتم التحقق منها عبر PlanManager
  */
 const PLAN_LIMITS = {
   Free: {
-    members: 5,        // Number of allowed members
-    workOrders: 50,    // Number of work orders monthly
-    reports: 3,        // Number of allowed reports
-    reminders: 10      // Number of allowed reminders
+    members: 5,        // عدد الأعضاء المسموح
+    workOrders: 50,    // عدد طلبات الصيانة شهرياً
+    reports: 3,        // عدد التقارير المسموحة
+    reminders: 10      // عدد التذكيرات المسموحة
   },
   Pro: {
-    members: 20,       // Number of allowed members
-    workOrders: 200,   // Number of work orders monthly
-    reports: 15,       // Number of allowed reports
-    reminders: 50      // Number of allowed reminders
+    members: 20,       // عدد الأعضاء المسموح
+    workOrders: 200,   // عدد طلبات الصيانة شهرياً
+    reports: 15,       // عدد التقارير المسموحة
+    reminders: 50      // عدد التذكيرات المسموحة
   },
   Business: {
     members: 100,
@@ -205,33 +205,33 @@ async function getPlanInfo(facilityId) {
 
 // ===== دوال التحقق من المدخلات =====
 /**
- * Validate email
- * @param {string} email - Email to validate
- * @returns {boolean} true if email is valid
+ * التحقق من صحة البريد الإلكتروني
+ * @param {string} email - البريد الإلكتروني للتحقق
+ * @returns {boolean} true إذا كان البريد صحيح
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 function validateEmail(email) {
   return SecurityManager.validateEmail(email);
 }
 
 /**
- * Validate phone number
- * @param {string} phone - Phone number to validate
- * @returns {boolean} true if phone number is valid
+ * التحقق من صحة رقم الهاتف
+ * @param {string} phone - رقم الهاتف للتحقق
+ * @returns {boolean} true إذا كان الرقم صحيح
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 function validatePhone(phone) {
   return SecurityManager.validatePhone(phone);
 }
 
 /**
- * Validate name
- * @param {string} name - Name to validate
- * @returns {boolean} true if name is valid
+ * التحقق من صحة الاسم
+ * @param {string} name - الاسم للتحقق
+ * @returns {boolean} true إذا كان الاسم صحيح
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 function validateName(name) {
   return SecurityManager.validateName(name);
@@ -300,13 +300,13 @@ setInterval(() => {
   FlowManager.cleanupExpiredFlows();
 }, 30 * 60 * 1000); // Check every 30 minutes
 
-// ===== User management functions =====
+// ===== دوال إدارة المستخدمين =====
 /**
- * Validate master access
- * @param {Object} ctx - Telegram request context
- * @returns {boolean} true if user is master
+ * التحقق من صلاحيات الماستر
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {boolean} true إذا كان المستخدم ماستر
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 const isMaster = (ctx) => {
   try {
@@ -317,11 +317,11 @@ const isMaster = (ctx) => {
 };
 
 /**
- * Ensure user exists and get their data
- * @param {Object} ctx - Telegram request context
- * @returns {Promise<Object>} User data
+ * التأكد من وجود المستخدم والحصول على بياناته
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 async function ensureUser(ctx) {
   const { user } = await SecurityManager.authenticateUser(ctx);
@@ -329,11 +329,11 @@ async function ensureUser(ctx) {
 }
 
 /**
- * Get user data
- * @param {Object} ctx - Telegram request context
- * @returns {Promise<Object>} User data
+ * الحصول على بيانات المستخدم
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم
  * 
- * Note: This is a local function that uses SecurityManager internally
+ * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
  */
 async function getUser(ctx) {
   const { user } = await SecurityManager.authenticateUser(ctx);
@@ -341,10 +341,10 @@ async function getUser(ctx) {
 }
 
 /**
- * Display bot main menu
- * @param {Object} ctx - Telegram request context
+ * عرض القائمة الرئيسية للبوت
+ * @param {Object} ctx - سياق طلب تيليجرام
  * 
- * This function displays main menu based on user status:
+ * هذه الدالة تعرض القائمة الرئيسية حسب حالة المستخدم:
  * - Users الجدد: خيارات التسجيل والانضمام
  * - Users النشطين: القائمة الكاملة مع الأزرار الأربعة الرئيسية
  * - الماستر: إضافة لوحة تحكم الماستر
@@ -416,21 +416,21 @@ async function showMainMenu(ctx) {
 
 // Remove duplicate start handler - using bot.command('start') instead
 
-// ===== Official commands with security =====
+// ===== الأوامر الرسمية مع الأمان =====
 
 /**
- * New facility registration command
+ * أمر تسجيل منشأة جديدة
  * 
- * This command starts new facility registration flow:
- * 1. Facility name (Step 1/4)
- * 2. City (Step 2/4)
- * 3. Phone number (Step 3/4)
- * 4. Plan selection (Step 4/4)
+ * هذا الأمر يبدأ فلو تسجيل منشأة جديدة:
+ * 1. اسم المنشأة (Step 1/4)
+ * 2. المدينة (Step 2/4)
+ * 3. رقم الهاتف (Step 3/4)
+ * 4. اختيار الخطة (Step 4/4)
  * 
  * Notes:
- * - Security is verified via SecurityManager
- * - Flow is managed via FlowManager
- * - Errors are handled via ErrorHandler
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم إدارة الفلو عبر FlowManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
  */
 bot.command('registerfacility', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
@@ -441,14 +441,14 @@ bot.command('registerfacility', async (ctx) => {
 });
 
 /**
- * Join facility command
+ * أمر الانضمام لمنشأة
  * 
- * This command shows list of active facilities available to join
- * User can choose facility and join it
+ * هذا الأمر يعرض قائمة المنشآت النشطة المتاحة للانضمام
+ * المستخدم يمكنه اختيار منشأة والانضمام إليها
  * 
  * Notes:
- * - Security is verified via SecurityManager
- * - Errors are handled via ErrorHandler
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
  */
 bot.command('join', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
@@ -457,14 +457,14 @@ bot.command('join', async (ctx) => {
 });
 
 /**
- * Switch between facilities command
+ * أمر التبديل بين المنشآت
  * 
- * This command shows list of facilities user belongs to
- * and allows switching between them
+ * هذا الأمر يعرض قائمة المنشآت التي ينتمي إليها المستخدم
+ * ويسمح له بالتبديل بينها
  * 
  * Notes:
- * - Security is verified via SecurityManager
- * - Errors are handled via ErrorHandler
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
  */
 bot.command('switch', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
@@ -612,16 +612,16 @@ bot.action('join_fac_start', async (ctx) => {
 });
 
 /**
- * Display list of active facilities to join
- * @param {Object} ctx - Telegram request context
+ * عرض قائمة المنشآت النشطة للانضمام
+ * @param {Object} ctx - سياق طلب تيليجرام
  * 
- * This function displays list of active facilities available to join
- * User can choose facility and join it
+ * هذه الدالة تعرض قائمة المنشآت النشطة المتاحة للانضمام
+ * المستخدم يمكنه اختيار منشأة والانضمام إليها
  * 
  * Notes:
- * - Security is verified via SecurityManager
- * - Errors are handled via ErrorHandler
- * - Facility names are cleaned via SecurityManager.sanitizeInput
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم معالجة الأخطاء عبر ErrorHandler
+ * - اسم المنشأةs are cleaned via SecurityManager.sanitizeInput
  */
 async function requireMembershipOrList(ctx) {
   try {
@@ -759,7 +759,7 @@ bot.action(/join_facility\|(\d+)\|(\w+)/, async (ctx) => {
       `📞 **Phone:** ${flowState.data.phone || 'Not provided'}\n` +
       `💼 **Job Title:** ${flowState.data.jobTitle || 'Not provided'}\n\n` +
       `⏳ **Status:** Pending Approval\n\n` +
-      `The facility administrator will review your request and approve it soon. You will receive a notification once approved.`,
+      `The facility administrator will review your request and approve it soon. You will receive a notification مرة واحدة approved.`,
       {
         reply_markup: {
           inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]]
@@ -826,9 +826,9 @@ bot.action(/join_fac\|(\d+)/, async (ctx) => {
       '• Receive notifications\n\n' +
       '**Registration Steps:**\n' +
       '1. Full Name\n' +
-      '2. Email (optional)\n' +
-      '3. Phone Number (optional)\n' +
-      '4. Job Title (optional)\n' +
+      '2. Email (اختياري)\n' +
+      '3. Phone Number (اختياري)\n' +
+      '4. Job Title (اختياري)\n' +
       '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
@@ -954,19 +954,19 @@ bot.action('wo_list', async (ctx) => {
 });
 
 /**
- * Check for active user membership
- * @param {Object} ctx - Telegram request context
- * @returns {Promise<Object>} User data والعضوية
+ * التحقق من وجود عضوية نشطة للمستخدم
+ * @param {Object} ctx - سياق طلب تيليجرام
+ * @returns {Promise<Object>} بيانات المستخدم والعضوية
  * 
- * This function verifies that user:
+ * هذه الدالة تتحقق من أن المستخدم:
  * - لديه عضوية نشطة في منشأة
  * - المنشأة نشطة
  * - الUser نشط
  * 
  * Notes:
- * - Security is verified via SecurityManager
- * - يتم إرجاع User data والعضوية
- * - Throws error if no active membership found
+ * - يتم التحقق من الأمان عبر SecurityManager
+ * - يتم إرجاع بيانات المستخدم والعضوية
+ * - يتم رفع خطأ إذا لم توجد عضوية نشطة
  */
 async function requireActiveMembership(ctx) {
   try {
@@ -995,7 +995,7 @@ async function requireActiveMembership(ctx) {
 // === Flow Handler for free text responses with security ===
 bot.on('text', async (ctx, next) => {
   try {
-    // Authenticate user first
+    // التحقق من هوية المستخدم first
     const { user } = await SecurityManager.authenticateUser(ctx);
     
     const flowState = FlowManager.getFlow(ctx.from.id.toString());
@@ -1051,7 +1051,7 @@ bot.on('text', async (ctx, next) => {
           );
         }
         
-        // Step 2: City
+        // Step 2: المدينة
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
@@ -1060,17 +1060,17 @@ bot.on('text', async (ctx, next) => {
             });
           }
           
-          const sanitizedCity = SecurityManager.sanitizeInput(text, 40);
-          if (sanitizedCity.length < 2) {
-            return ctx.reply('⚠️ City must be at least 2 characters. Try again or type /cancel to exit:');
+          const sanitizedالمدينة = SecurityManager.sanitizeInput(text, 40);
+          if (sanitizedالمدينة.length < 2) {
+            return ctx.reply('⚠️ المدينة must be at least 2 characters. Try again or type /cancel to exit:');
           }
           
-          FlowManager.updateData(ctx.from.id.toString(), { city: sanitizedCity });
+          FlowManager.updateData(ctx.from.id.toString(), { city: sanitizedالمدينة });
           FlowManager.updateStep(ctx.from.id.toString(), 3);
           
           return ctx.reply(
             `✅ **Facility Name:** ${flowState.data.name}\n` +
-            `✅ **City:** ${flowState.data.city}\n\n` +
+            `✅ **المدينة:** ${flowState.data.city}\n\n` +
             `📞 **Step 3/4: Enter contact phone**\n` +
             `Maximum 25 characters\n\n` +
             `Type /cancel to exit registration`,
@@ -1104,7 +1104,7 @@ bot.on('text', async (ctx, next) => {
           
           return ctx.reply(
             `✅ **Facility Name:** ${flowState.data.name}\n` +
-            `✅ **City:** ${flowState.data.city}\n` +
+            `✅ **المدينة:** ${flowState.data.city}\n` +
             `✅ **Phone:** ${flowState.data.phone}\n\n` +
             `💼 **Step 4/4: Choose subscription plan**\n\n` +
             `**Available Plans:**\n` +
@@ -1159,7 +1159,7 @@ bot.on('text', async (ctx, next) => {
           );
         }
         
-        // Step 2: Email (optional)
+        // Step 2: Email (اختياري)
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
@@ -1192,7 +1192,7 @@ bot.on('text', async (ctx, next) => {
           );
         }
         
-        // Step 3: Phone (optional)
+        // Step 3: Phone (اختياري)
         if (flowState.step === 3) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
@@ -1227,7 +1227,7 @@ bot.on('text', async (ctx, next) => {
           );
         }
         
-        // Step 4: Job Title (optional)
+        // Step 4: Job Title (اختياري)
         if (flowState.step === 4) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
@@ -1307,7 +1307,7 @@ bot.on('text', async (ctx, next) => {
             `✅ **Service:** ${flowState.data.typeOfService}\n` +
             `✅ **Priority:** ${flowState.data.priority}\n` +
             `✅ **Location:** ${sanitizedLocation}\n\n` +
-            `🔧 **Enter equipment details (optional)**\n` +
+            `🔧 **Enter equipment details (اختياري)**\n` +
             `(e.g., HVAC Unit #5, Electrical Panel B)\n\n` +
             `Type /skip to skip this step\n` +
             `Type /cancel to exit`,
@@ -1315,7 +1315,7 @@ bot.on('text', async (ctx, next) => {
           );
         }
         
-        // Step 5: Equipment (optional)
+        // Step 5: Equipment (اختياري)
         if (flowState.step === 5) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
@@ -1505,10 +1505,10 @@ bot.on('text', async (ctx, next) => {
           FlowManager.updateStep(ctx.from.id.toString(), 5);
 
           const frequencyButtons = [
-            [Markup.button.callback('🔄 Once', 'reminder_frequency|once')],
-            [Markup.button.callback('📅 Daily', 'reminder_frequency|daily')],
-            [Markup.button.callback('📅 Weekly', 'reminder_frequency|weekly')],
-            [Markup.button.callback('📅 Monthly', 'reminder_frequency|monthly')],
+            [Markup.button.callback('🔄 Once', 'reminder_frequency|مرة واحدة')],
+            [Markup.button.callback('📅 Daily', 'reminder_frequency|يومياً')],
+            [Markup.button.callback('📅 Weekly', 'reminder_frequency|أسبوعياً')],
+            [Markup.button.callback('📅 Monthly', 'reminder_frequency|شهرياً')],
             [Markup.button.callback('❌ Cancel', 'reminder_cancel')]
           ];
 
@@ -1833,10 +1833,10 @@ bot.on('text', async (ctx, next) => {
           FlowManager.updateStep(ctx.from.id.toString(), 5);
           
           const frequencyButtons = [
-            [Markup.button.callback('🔄 Once', 'reminder_frequency|once')],
-            [Markup.button.callback('📅 Daily', 'reminder_frequency|daily')],
-            [Markup.button.callback('📅 Weekly', 'reminder_frequency|weekly')],
-            [Markup.button.callback('📅 Monthly', 'reminder_frequency|monthly')],
+            [Markup.button.callback('🔄 Once', 'reminder_frequency|مرة واحدة')],
+            [Markup.button.callback('📅 Daily', 'reminder_frequency|يومياً')],
+            [Markup.button.callback('📅 Weekly', 'reminder_frequency|أسبوعياً')],
+            [Markup.button.callback('📅 Monthly', 'reminder_frequency|شهرياً')],
             [Markup.button.callback('❌ Cancel', 'reminder_cancel')]
           ];
           
@@ -2095,7 +2095,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
       `✅ **Facility Registration Successful!**\n\n` +
       `🏢 **Facility Details:**\n` +
       `• Name: ${facility.name}\n` +
-      `• City: ${data.city}\n` +
+      `• المدينة: ${data.city}\n` +
       `• Phone: ${data.phone}\n` +
       `• Plan: ${data.plan}\n` +
       `• Status: Pending Approval\n\n` +
@@ -2112,7 +2112,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
     // Notify master (respect settings if master is a regular user with settings)
     if (MASTER_ID) {
       try {
-        // Check if master has notification settings (optional, masters usually want all notifications)
+        // Check if master has notification settings (اختياري, masters usually want all notifications)
         let shouldNotifyMaster = true;
         try {
           const masterSettings = await getUserNotificationSettings(MASTER_ID);
@@ -2128,7 +2128,7 @@ bot.action(/regfac_plan\|(Free|Pro|Business)/, async (ctx) => {
             `🏢 **New Facility Request**\n\n` +
             `📝 **Details:**\n` +
             `• Name: ${facility.name}\n` +
-            `• City: ${data.city}\n` +
+            `• المدينة: ${data.city}\n` +
             `• Phone: ${data.phone}\n` +
             `• Plan: ${data.plan}\n` +
             `• ID: ${facility.id.toString()}\n` +
@@ -3231,7 +3231,7 @@ bot.action('facility_settings', async (ctx) => {
     const settingsMessage = 
       `⚙️ **Facility Settings**\n\n` +
       `📋 **Name:** ${facility.name}\n` +
-      `📍 **City:** ${facility.city || 'Not set'}\n` +
+      `📍 **المدينة:** ${facility.city || 'Not set'}\n` +
       `📞 **Phone:** ${facility.phone || 'Not set'}\n` +
       `💼 **Plan:** ${facility.planTier || 'Not set'}\n` +
       `✅ **Status:** ${facility.isActive ? 'Active' : 'Inactive'}\n\n` +
@@ -3256,21 +3256,21 @@ bot.action('facility_settings', async (ctx) => {
 // Load user notification settings (from latest system_alert with title user_notification_settings)
 async function getUserNotificationSettings(userId) {
   const settingsKey = 'user_notification_settings';
-  const defaults = {
+  const افتراضيs = {
     workOrderUpdates: true,
     statusChanges: true,
     highPriorityAlerts: true,
-    dailySummaries: true,
-    weeklyReports: true
+    يومياًSummaries: true,
+    أسبوعياًReports: true
   };
   try {
     const existing = await prisma.notification.findFirst({
       where: { userId: BigInt(userId), type: 'system_alert', title: settingsKey },
       orderBy: { createdAt: 'desc' }
     });
-    return existing?.data ? { ...defaults, ...existing.data } : defaults;
+    return existing?.data ? { ...افتراضيs, ...existing.data } : افتراضيs;
   } catch (e) {
-    return defaults;
+    return افتراضيs;
   }
 }
 
@@ -3281,8 +3281,8 @@ function isNotificationEnabledForType(settings, type) {
     work_order_assigned: 'workOrderUpdates',
     work_order_status_changed: 'statusChanges',
     high_priority_alert: 'highPriorityAlerts',
-    daily_summary: 'dailySummaries',
-    weekly_report: 'weeklyReports',
+    يومياً_summary: 'يومياًSummaries',
+    أسبوعياً_report: 'أسبوعياًReports',
     system_alert: true,
     new_member_request: 'statusChanges',
     membership_approved: 'statusChanges',
@@ -3291,19 +3291,19 @@ function isNotificationEnabledForType(settings, type) {
 
   const key = map[type];
   if (key === true) return true;
-  if (!key) return true; // default allow if unmapped
+  if (!key) return true; // افتراضي allow if unmapped
   return Boolean(settings[key]);
 }
 /**
- * Create new notification
- * @param {BigInt|string} userId - User ID
- * @param {BigInt|string} facilityId - Facility ID (optional)
- * @param {string} type - Notification type
- * @param {string} title - Notification title
- * @param {string} message - Notification message
- * @param {Object} data - Additional data (optional)
+ * إنشاء إشعار جديد
+ * @param {BigInt|string} userId - معرف المستخدم
+ * @param {BigInt|string} facilityId - معرف المنشأة (اختياري)
+ * @param {string} type - نوع الإشعار
+ * @param {string} title - عنوان الإشعار
+ * @param {string} message - رسالة الإشعار
+ * @param {Object} data - بيانات إضافية (اختياري)
  * 
- * Supported notification types:
+ * أنواع الإشعارات المدعومة:
  * - work_order_created: إنشاء طلب صيانة جديد
  * - work_order_status_changed: تغيير حالة طلب الصيانة
  * - work_order_assigned: تعيين طلب صيانة
@@ -3311,17 +3311,17 @@ function isNotificationEnabledForType(settings, type) {
  * - member_left: مغادرة عضو
  * - facility_activated: تفعيل منشأة
  * - high_priority_alert: تنبيه أولوية عالية
- * - daily_summary: ملخص يومي
- * - weekly_report: تقرير أسبوعي
+ * - يومياً_summary: ملخص يومي
+ * - أسبوعياً_report: تقرير أسبوعي
  * - system_alert: تنبيه نظام
  * - new_member_request: طلب انضمام جديد
  * - membership_approved: موافقة على العضوية
  * - role_changed: تغيير الدور
  * 
  * Notes:
- * - Notification is saved to database
- * - Errors are handled safely
- * - Additional data is converted to JSON
+ * - يتم حفظ الإشعار في قاعدة البيانات
+ * - يتم معالجة الأخطاء بشكل آمن
+ * - يتم تحويل البيانات الإضافية إلى JSON
  */
 async function createNotification(userId, facilityId, type, title, message, data = null) {
   try {
@@ -3353,20 +3353,20 @@ async function createNotification(userId, facilityId, type, title, message, data
 
 /**
  * إرسال إشعار للUser عبر تيليجرام
- * @param {BigInt|string} userId - User ID
- * @param {string} title - Notification title
- * @param {string} message - Notification message
- * @param {Array} buttons - Interactive buttons (optional)
- * @param {string} notificationType - Notification type للتحقق من الإعدادات (optional)
+ * @param {BigInt|string} userId - معرف المستخدم
+ * @param {string} title - عنوان الإشعار
+ * @param {string} message - رسالة الإشعار
+ * @param {Array} buttons - أزرار تفاعلية (اختياري)
+ * @param {string} notificationType - نوع الإشعار للتحقق من الإعدادات (اختياري)
  * 
- * This function sends direct notification to user via Telegram
+ * هذه الدالة ترسل إشعار مباشر للمستخدم عبر تيليجرام
  * 
  * Notes:
  * - يتم البحث عن الUser في قاعدة البيانات
  * - يتم التحقق من وجود معرف تيليجرام
- * - يتم التحقق من إعدادات الإشعارات (إن تم تمرير Notification type)
- * - Sends message with interactive buttons (if any)
- * - Errors are handled safely
+ * - يتم التحقق من إعدادات الإشعارات (إن تم تمرير نوع الإشعار)
+ * - يتم إرسال الرسالة مع الأزرار التفاعلية (إن وجدت)
+ * - يتم معالجة الأخطاء بشكل آمن
  */
 async function sendTelegramNotification(userId, title, message, buttons = null, notificationType = null) {
   try {
@@ -3383,7 +3383,7 @@ async function sendTelegramNotification(userId, title, message, buttons = null, 
     if (notificationType) {
       const settings = await getUserNotificationSettings(userId);
       if (!isNotificationEnabledForType(settings, notificationType)) {
-        console.log(`Notification type ${notificationType} disabled for user ${userId}`);
+        console.log(`نوع الإشعار ${notificationType} disabled for user ${userId}`);
         return;
       }
     }
@@ -3478,8 +3478,8 @@ bot.action(/notification_view\|(\d+)/, async (ctx) => {
       'member_left': '👋',
       'facility_activated': '✅',
       'high_priority_alert': '🚨',
-      'daily_summary': '📊',
-      'weekly_report': '📈',
+      'يومياً_summary': '📊',
+      'أسبوعياً_report': '📈',
       'system_alert': '⚠️'
     };
     
@@ -3523,8 +3523,8 @@ bot.action('reports_menu', async (ctx) => {
     }
     
     const buttons = [
-      [Markup.button.callback('📊 Daily Summary', 'report_daily')],
-      [Markup.button.callback('📈 Weekly Report', 'report_weekly')],
+      [Markup.button.callback('📊 Daily Summary', 'report_يومياً')],
+      [Markup.button.callback('📈 Weekly Report', 'report_أسبوعياً')],
       [Markup.button.callback('📋 Work Order Analysis', 'report_work_orders')],
       [Markup.button.callback('👥 Member Activity', 'report_members')],
       [Markup.button.callback('🎯 Priority Analysis', 'report_priorities')],
@@ -3542,7 +3542,7 @@ bot.action('reports_menu', async (ctx) => {
 });
 
 // Daily summary report
-bot.action('report_daily', async (ctx) => {
+bot.action('report_يومياً', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
     const { user } = await requireActiveMembership(ctx);
@@ -3628,7 +3628,7 @@ bot.action('report_daily', async (ctx) => {
       `📊 **Current Status Distribution:**\n${statusSection}`;
     
     const buttons = [
-      [Markup.button.callback('📈 Weekly Report', 'report_weekly')],
+      [Markup.button.callback('📈 Weekly Report', 'report_أسبوعياً')],
       [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
       [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
     ];
@@ -3637,13 +3637,13 @@ bot.action('report_daily', async (ctx) => {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
-    console.error('Error generating daily report:', error);
+    console.error('Error generating يومياً report:', error);
     await ctx.reply('⚠️ An error occurred while generating the report.');
   }
 });
 
 // Weekly report
-bot.action('report_weekly', async (ctx) => {
+bot.action('report_أسبوعياً', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
     const { user } = await requireActiveMembership(ctx);
@@ -3664,15 +3664,15 @@ bot.action('report_weekly', async (ctx) => {
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     
-    // Get weekly statistics
-    const weeklyWorkOrders = await prisma.workOrder.count({
+    // Get أسبوعياً statistics
+    const أسبوعياًWorkOrders = await prisma.workOrder.count({
       where: {
         facilityId: user.activeFacilityId,
         createdAt: { gte: weekAgo }
       }
     });
     
-    const weeklyCompleted = await prisma.workOrder.count({
+    const أسبوعياًCompleted = await prisma.workOrder.count({
       where: {
         facilityId: user.activeFacilityId,
         status: { in: ['done', 'closed'] },
@@ -3680,8 +3680,8 @@ bot.action('report_weekly', async (ctx) => {
       }
     });
     
-    const completionRate = weeklyWorkOrders > 0 ? 
-      Math.round((weeklyCompleted / weeklyWorkOrders) * 100) : 0;
+    const completionRate = أسبوعياًWorkOrders > 0 ? 
+      Math.round((أسبوعياًCompleted / أسبوعياًWorkOrders) * 100) : 0;
     
     const priorityStats = await prisma.workOrder.groupBy({
       by: ['priority'],
@@ -3712,13 +3712,13 @@ bot.action('report_weekly', async (ctx) => {
       `📈 **Weekly Report**\n` +
       `📅 Last 7 Days\n\n` +
       `📊 **Weekly Statistics:**\n` +
-      `📋 Total Work Orders: ${weeklyWorkOrders}\n` +
-      `✅ Completed: ${weeklyCompleted}\n` +
+      `📋 Total Work Orders: ${أسبوعياًWorkOrders}\n` +
+      `✅ Completed: ${أسبوعياًCompleted}\n` +
       `📈 Completion Rate: ${completionRate}%\n\n` +
       `🎯 **Priority Distribution:**\n${prioritySection}`;
     
     const buttons = [
-      [Markup.button.callback('📊 Daily Summary', 'report_daily')],
+      [Markup.button.callback('📊 Daily Summary', 'report_يومياً')],
       [Markup.button.callback('🔙 Back to Reports', 'reports_menu')],
       [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
     ];
@@ -3727,7 +3727,7 @@ bot.action('report_weekly', async (ctx) => {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
-    console.error('Error generating weekly report:', error);
+    console.error('Error generating أسبوعياً report:', error);
     await ctx.reply('⚠️ An error occurred while generating the report.');
   }
 });
@@ -4064,22 +4064,22 @@ bot.action('notification_settings', async (ctx) => {
   try {
     const { user } = await requireActiveMembership(ctx);
 
-    // Load current settings from a synthetic system notification (or defaults)
+    // Load current settings from a synthetic system notification (or افتراضيs)
     const settingsKey = 'user_notification_settings';
     const existing = await prisma.notification.findFirst({
       where: { userId: user.id, type: 'system_alert', title: settingsKey },
       orderBy: { createdAt: 'desc' }
     });
 
-    const defaults = {
+    const افتراضيs = {
       workOrderUpdates: true,
       statusChanges: true,
       highPriorityAlerts: true,
-      dailySummaries: true,
-      weeklyReports: true
+      يومياًSummaries: true,
+      أسبوعياًReports: true
     };
 
-    const settings = existing?.data ? { ...defaults, ...existing.data } : defaults;
+    const settings = existing?.data ? { ...افتراضيs, ...existing.data } : افتراضيs;
 
     const toEmoji = (v) => (v ? '✅' : '❌');
 
@@ -4088,8 +4088,8 @@ bot.action('notification_settings', async (ctx) => {
       `${toEmoji(settings.workOrderUpdates)} Work Order Updates\n` +
       `${toEmoji(settings.statusChanges)} Status Changes\n` +
       `${toEmoji(settings.highPriorityAlerts)} High Priority Alerts\n` +
-      `${toEmoji(settings.dailySummaries)} Daily Summaries\n` +
-      `${toEmoji(settings.weeklyReports)} Weekly Reports`;
+      `${toEmoji(settings.يومياًSummaries)} Daily Summaries\n` +
+      `${toEmoji(settings.أسبوعياًReports)} Weekly Reports`;
 
     const buttons = [
       [
@@ -4100,8 +4100,8 @@ bot.action('notification_settings', async (ctx) => {
         Markup.button.callback(`${toEmoji(settings.highPriorityAlerts)} High Priority`, 'notif_toggle|highPriorityAlerts')
       ],
       [
-        Markup.button.callback(`${toEmoji(settings.dailySummaries)} Daily`, 'notif_toggle|dailySummaries'),
-        Markup.button.callback(`${toEmoji(settings.weeklyReports)} Weekly`, 'notif_toggle|weeklyReports')
+        Markup.button.callback(`${toEmoji(settings.يومياًSummaries)} Daily`, 'notif_toggle|يومياًSummaries'),
+        Markup.button.callback(`${toEmoji(settings.أسبوعياًReports)} Weekly`, 'notif_toggle|أسبوعياًReports')
       ],
       [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
       [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
@@ -4118,7 +4118,7 @@ bot.action('notification_settings', async (ctx) => {
 });
 
 // Toggle notification settings
-bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dailySummaries|weeklyReports)/, async (ctx) => {
+bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|يومياًSummaries|أسبوعياًReports)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
     const { user } = await requireActiveMembership(ctx);
@@ -4130,14 +4130,14 @@ bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dai
       orderBy: { createdAt: 'desc' }
     });
 
-    const defaults = {
+    const افتراضيs = {
       workOrderUpdates: true,
       statusChanges: true,
       highPriorityAlerts: true,
-      dailySummaries: true,
-      weeklyReports: true
+      يومياًSummaries: true,
+      أسبوعياًReports: true
     };
-    const current = existing?.data ? { ...defaults, ...existing.data } : defaults;
+    const current = existing?.data ? { ...افتراضيs, ...existing.data } : افتراضيs;
     const updated = { ...current, [key]: !current[key] };
 
     // Persist as a new system_alert record (immutable audit-friendly)
@@ -4159,8 +4159,8 @@ bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dai
       `${toEmoji(updated.workOrderUpdates)} Work Order Updates\n` +
       `${toEmoji(updated.statusChanges)} Status Changes\n` +
       `${toEmoji(updated.highPriorityAlerts)} High Priority Alerts\n` +
-      `${toEmoji(updated.dailySummaries)} Daily Summaries\n` +
-      `${toEmoji(updated.weeklyReports)} Weekly Reports`;
+      `${toEmoji(updated.يومياًSummaries)} Daily Summaries\n` +
+      `${toEmoji(updated.أسبوعياًReports)} Weekly Reports`;
 
     const buttons = [
       [
@@ -4171,8 +4171,8 @@ bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dai
         Markup.button.callback(`${toEmoji(updated.highPriorityAlerts)} High Priority`, 'notif_toggle|highPriorityAlerts')
       ],
       [
-        Markup.button.callback(`${toEmoji(updated.dailySummaries)} Daily`, 'notif_toggle|dailySummaries'),
-        Markup.button.callback(`${toEmoji(updated.weeklyReports)} Weekly`, 'notif_toggle|weeklyReports')
+        Markup.button.callback(`${toEmoji(updated.يومياًSummaries)} Daily`, 'notif_toggle|يومياًSummaries'),
+        Markup.button.callback(`${toEmoji(updated.أسبوعياًReports)} Weekly`, 'notif_toggle|أسبوعياًReports')
       ],
       [Markup.button.callback('🔙 Back to Notifications', 'notifications')],
       [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
@@ -4188,12 +4188,12 @@ bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dai
   }
 });
 
-// ===== نظام Team Management وAssign Tasks =====
+// ===== نظام إدارة الفريق وتعيين المهام =====
 
 /**
- * Get list of available technicians in facility
- * @param {BigInt} facilityId - Facility ID
- * @returns {Promise<Array>} List of available technicians
+ * الحصول على قائمة الفنيين المتاحين في المنشأة
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @returns {Promise<Array>} قائمة الفنيين المتاحين
  */
 async function getAvailableTechnicians(facilityId) {
   try {
@@ -4223,11 +4223,11 @@ async function getAvailableTechnicians(facilityId) {
 }
 
 /**
- * Assign work order to specific technician
- * @param {BigInt} workOrderId - Work order ID
- * @param {BigInt} technicianUserId - Technician ID
- * @param {BigInt} assignedByUserId - User ID الذي قام بالتعيين
- * @returns {Promise<boolean>} Whether assignment succeeded
+ * تعيين ورك أوردر لفني محدد
+ * @param {BigInt} workOrderId - معرف طلب الصيانة
+ * @param {BigInt} technicianUserId - معرف الفني
+ * @param {BigInt} assignedByUserId - معرف المستخدم الذي قام بالتعيين
+ * @returns {Promise<boolean>} نجح التعيين أم لا
  */
 async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assignedByUserId) {
   try {
@@ -4274,10 +4274,10 @@ async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assign
 }
 
 /**
- * Get technician statistics
- * @param {BigInt} technicianUserId - Technician ID
- * @param {BigInt} facilityId - Facility ID
- * @returns {Promise<Object>} Technician statistics
+ * الحصول على إحصائيات الفني
+ * @param {BigInt} technicianUserId - معرف الفني
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @returns {Promise<Object>} إحصائيات الفني
  */
 async function getTechnicianStats(technicianUserId, facilityId) {
   try {
@@ -4312,40 +4312,40 @@ async function getTechnicianStats(technicianUserId, facilityId) {
   }
 }
 
-// ===== Reminder system =====
+// ===== نظام التذكيرات =====
 /**
- * Create new reminder
- * @param {BigInt|string} facilityId - Facility ID
- * @param {BigInt|string} createdByUserId - Reminder creator ID
- * @param {string} type - Reminder type
- * @param {string} title - Reminder title
- * @param {string} message - Reminder message
- * @param {Date} scheduledFor - Due date
- * @param {string} frequency - Reminder frequency (default: once)
- * @param {Object} data - Additional data (optional)
+ * إنشاء تذكير جديد
+ * @param {BigInt|string} facilityId - معرف المنشأة
+ * @param {BigInt|string} createdByUserId - معرف منشئ التذكير
+ * @param {string} type - نوع التذكير
+ * @param {string} title - عنوان التذكير
+ * @param {string} message - رسالة التذكير
+ * @param {Date} scheduledFor - تاريخ الاستحقاق
+ * @param {string} frequency - تكرار التذكير (افتراضي: مرة واحدة)
+ * @param {Object} data - بيانات إضافية (اختياري)
  * 
- * Supported reminder types:
- * - maintenance: periodic maintenance
- * - inspection: periodic inspection
- * - cleaning: periodic cleaning
- * - calibration: periodic calibration
- * - replacement: periodic replacement
- * - custom: custom reminder
+ * أنواع التذكيرات المدعومة:
+ * - maintenance: صيانة دورية
+ * - inspection: فحص دوري
+ * - cleaning: تنظيف دوري
+ * - calibration: معايرة دورية
+ * - replacement: استبدال دوري
+ * - custom: تذكير مخصص
  * 
- * Supported reminder frequencies:
- * - once: once
- * - daily: daily
- * - weekly: weekly
- * - monthly: monthly
- * - quarterly: quarterly
- * - yearly: yearly
+ * تكرارات التذكيرات المدعومة:
+ * - مرة واحدة: مرة واحدة
+ * - يومياً: يومياً
+ * - أسبوعياً: أسبوعياً
+ * - شهرياً: شهرياً
+ * - كل 3 أشهر: كل 3 أشهر
+ * - سنوياً: سنوياً
  * 
  * Notes:
- * - Reminder is saved to database
- * - Additional data is converted to JSON
- * - Errors are handled safely
+ * - يتم حفظ التذكير في قاعدة البيانات
+ * - يتم تحويل البيانات الإضافية إلى JSON
+ * - يتم معالجة الأخطاء بشكل آمن
  */
-async function createReminder(facilityId, createdByUserId, type, title, message, scheduledFor, frequency = 'once', data = null) {
+async function createReminder(facilityId, createdByUserId, type, title, message, scheduledFor, frequency = 'مرة واحدة', data = null) {
   try {
     await prisma.reminder.create({
       data: {
@@ -4365,19 +4365,19 @@ async function createReminder(facilityId, createdByUserId, type, title, message,
 }
 
 /**
- * Send reminder to all facility members
- * @param {BigInt|string} facilityId - Facility ID
- * @param {string} title - Reminder title
- * @param {string} message - Reminder message
- * @param {Array} buttons - Interactive buttons (optional)
+ * إرسال تذكير لجميع أعضاء المنشأة
+ * @param {BigInt|string} facilityId - معرف المنشأة
+ * @param {string} title - عنوان التذكير
+ * @param {string} message - رسالة التذكير
+ * @param {Array} buttons - أزرار تفاعلية (اختياري)
  * 
- * This function sends reminder to all active facility members
+ * هذه الدالة ترسل تذكير لجميع الأعضاء النشطين في المنشأة
  * 
  * Notes:
- * - Search for all facility members
- * - Reminder is sent to each member with Telegram ID
- * - Errors are handled for each member individually
- * - Interactive buttons are added (if any)
+ * - يتم البحث عن جميع الأعضاء في المنشأة
+ * - يتم إرسال التذكير لكل عضو لديه معرف تيليجرام
+ * - يتم معالجة الأخطاء لكل عضو على حدة
+ * - أزرار تفاعلية are added (if any)
  */
 async function sendReminderToFacility(facilityId, title, message, buttons = null) {
   try {
@@ -4389,9 +4389,9 @@ async function sendReminderToFacility(facilityId, title, message, buttons = null
     for (const member of members) {
       if (member.user.tgId) {
         try {
-          // Check user notification settings for reminders/daily summaries
+          // Check user notification settings for reminders/يومياً summaries
           const settings = await getUserNotificationSettings(member.userId);
-          const shouldSend = settings.dailySummaries || settings.weeklyReports; // Assume reminders fall under these
+          const shouldSend = settings.يومياًSummaries || settings.أسبوعياًReports; // Assume reminders fall under these
           
           if (!shouldSend) {
             console.log(`Skipping reminder for user ${member.userId} due to notification settings`);
@@ -4589,7 +4589,7 @@ bot.action(/reminder_type\|(work_order_due|periodic_check|maintenance_schedule|c
 });
 
 // Handle reminder frequency selection
-bot.action(/reminder_frequency\|(once|daily|weekly|monthly)/, async (ctx) => {
+bot.action(/reminder_frequency\|(مرة واحدة|يومياً|أسبوعياً|شهرياً)/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const flowState = FlowManager.getFlow(ctx.from.id.toString());
   if (!flowState || flowState.flow !== 'create_reminder') return;
@@ -4611,10 +4611,10 @@ bot.action(/reminder_frequency\|(once|daily|weekly|monthly)/, async (ctx) => {
   FlowManager.clearFlow(ctx.from.id.toString());
   
   const frequencyText = {
-    'once': 'Once',
-    'daily': 'Daily',
-    'weekly': 'Weekly',
-    'monthly': 'Monthly'
+    'مرة واحدة': 'Once',
+    'يومياً': 'Daily',
+    'أسبوعياً': 'Weekly',
+    'شهرياً': 'Monthly'
   };
   
   await ctx.reply(
@@ -4667,10 +4667,10 @@ bot.action(/reminder_view\|(\d+)/, async (ctx) => {
     };
     
     const frequencyText = {
-      'once': 'Once',
-      'daily': 'Daily',
-      'weekly': 'Weekly',
-      'monthly': 'Monthly',
+      'مرة واحدة': 'Once',
+      'يومياً': 'Daily',
+      'أسبوعياً': 'Weekly',
+      'شهرياً': 'Monthly',
       'custom': 'Custom'
     };
     
@@ -4921,7 +4921,7 @@ bot.action('menu_admin', async (ctx) => {
 
 // ===== Team Management =====
 
-// Team Management Menu
+// قائمة إدارة الفريق
 bot.action('team_management', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   try {
@@ -4978,8 +4978,8 @@ bot.action('team_management', async (ctx) => {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
-    console.error('Error in team management:', error);
-    await ctx.reply('⚠️ An error occurred while loading team management.');
+    console.error('خطأ في إدارة الفريق:', error);
+    await ctx.reply('⚠️ An error occurred while تحميل إدارة الفريق.');
   }
 });
 
@@ -5033,7 +5033,7 @@ bot.action('view_team', async (ctx) => {
         Markup.button.callback('🔧 عرض Technicians فقط', 'view_technicians'),
         Markup.button.callback('👨‍💼 عرض Supervisors', 'view_supervisors')
       ],
-      [Markup.button.callback('🔙 العودة لTeam Management', 'team_management')]
+      [Markup.button.callback('🔙 Back to Team Management', 'team_management')]
     ];
 
     await ctx.reply(teamMessage, {
@@ -5085,7 +5085,7 @@ bot.action('technician_stats', async (ctx) => {
         Markup.button.callback('📋 توزيع الtasks', 'workload_distribution'),
         Markup.button.callback('🔄 Update Statistics', 'technician_stats')
       ],
-      [Markup.button.callback('🔙 العودة لTeam Management', 'team_management')]
+      [Markup.button.callback('🔙 Back to Team Management', 'team_management')]
     ];
 
     await ctx.reply(statsMessage, {
@@ -5314,7 +5314,7 @@ bot.action('technician_dashboard', async (ctx) => {
       take: 10
     });
 
-    // Technician statistics
+    // إحصائيات الفني
     const stats = await getTechnicianStats(user.id, user.activeFacilityId);
 
     let dashboardMessage = `🛠️ **Technician Dashboard**\n\n`;
@@ -7217,9 +7217,9 @@ bot.action('register_user', async (ctx) => {
       '• Receive notifications\n\n' +
       '**Registration Steps:**\n' +
       '1. Full Name\n' +
-      '2. Email (optional)\n' +
-      '3. Phone Number (optional)\n' +
-      '4. Job Title (optional)\n' +
+      '2. Email (اختياري)\n' +
+      '3. Phone Number (اختياري)\n' +
+      '4. Job Title (اختياري)\n' +
       '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
@@ -7256,9 +7256,9 @@ bot.action('register_technician', async (ctx) => {
       '• View assigned tasks\n\n' +
       '**Registration Steps:**\n' +
       '1. Full Name\n' +
-      '2. Email (optional)\n' +
-      '3. Phone Number (optional)\n' +
-      '4. Job Title (optional)\n' +
+      '2. Email (اختياري)\n' +
+      '3. Phone Number (اختياري)\n' +
+      '4. Job Title (اختياري)\n' +
       '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
@@ -7296,9 +7296,9 @@ bot.action('register_supervisor', async (ctx) => {
       '• Assign tasks to technicians\n\n' +
       '**Registration Steps:**\n' +
       '1. Full Name\n' +
-      '2. Email (optional)\n' +
-      '3. Phone Number (optional)\n' +
-      '4. Job Title (optional)\n' +
+      '2. Email (اختياري)\n' +
+      '3. Phone Number (اختياري)\n' +
+      '4. Job Title (اختياري)\n' +
       '5. Select Facility\n\n' +
       'Please enter your **full name**:'
     );
@@ -7579,10 +7579,10 @@ bot.action(/set_role\|(\d+)\|(\w+)/, async (ctx) => {
  * @param {Object} res - استجابة HTTP
  * 
  * Notes:
- * - Checks request type (POST only)
- * - Sets request timeout (25 seconds)
- * - Errors are handled safely
- * - Logs all requests for debugging
+ * - يتم التحقق من نوع الطلب (POST فقط)
+ * - يتم تعيين timeout للطلب (25 ثانية)
+ * - يتم معالجة الأخطاء بشكل آمن
+ * - يتم تسجيل جميع الطلبات للـ debugging
  */
 module.exports = async (req, res) => {
   console.log('Webhook received:', { method: req.method, body: req.body });
