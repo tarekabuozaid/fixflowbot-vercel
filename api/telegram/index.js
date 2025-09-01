@@ -3,36 +3,36 @@
  * FIXFLOW BOT - MAIN ENTRY POINT
  * ============================================================================
  * 
- * هذا الملف هو النقطة الرئيسية لبوت FixFlow لإدارة الصيانة
- * يحتوي على جميع الأوامر والمعالجات والفلوهات التفاعلية
+ * This is the main entry point for FixFlow maintenance management bot
+ * Contains all commands, handlers, and interactive flows
  * 
- * الميزات الرئيسية:
- * - إدارة المنشآت والأعضاء
- * - إنشاء ومتابعة طلبات الصيانة
- * - نظام التقارير والإحصائيات
- * - إدارة التذكيرات والإشعارات
- * - نظام الأدوار والصلاحيات
+ * Key Features:
+ * - Facility and member management
+ * - Work order creation and tracking
+ * - Reporting and statistics system
+ * - Reminder and notification management
+ * - Role-based access control
  * 
- * البنية المعمارية:
- * - SecurityManager: إدارة الأمان والتحقق
- * - FlowManager: إدارة الفلوهات التفاعلية
- * - PlanManager: إدارة خطط الاشتراك
- * - ErrorHandler: معالجة الأخطاء المركزية
+ * Architecture:
+ * - SecurityManager: Security and validation management
+ * - FlowManager: Interactive flow management
+ * - PlanManager: Subscription plan management
+ * - ErrorHandler: Centralized error handling
  * 
- * تاريخ آخر تحديث: 31 أغسطس 2025
- * المطور: Tarek Abu Ozaid
+ * Last Updated: August 31, 2025
+ * Developer: Tarek Abu Ozaid
  * ============================================================================
  */
 
 const { Telegraf, Markup } = require('telegraf');
 const { PrismaClient } = require('@prisma/client');
 
-// ===== استيراد الوحدات الجديدة (Modular Utilities) =====
-// هذه الوحدات تم تطويرها حديثاً لتحسين الأمان والأداء
-const SecurityManager = require('./utils/security');      // إدارة الأمان والتحقق
-const FlowManager = require('./utils/flowManager');       // إدارة الفلوهات التفاعلية
-const PlanManager = require('./utils/planManager');       // إدارة خطط الاشتراك
-const ErrorHandler = require('./utils/errorHandler');     // معالجة الأخطاء المركزية
+// ===== Import New Modular Utilities =====
+// These modules were recently developed to improve security and performance
+const SecurityManager = require('./utils/security');      // Security and validation management
+const FlowManager = require('./utils/flowManager');       // Interactive flow management
+const PlanManager = require('./utils/planManager');       // Subscription plan management
+const ErrorHandler = require('./utils/errorHandler');     // Centralized error handling
 
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {
@@ -63,33 +63,33 @@ const prisma = new PrismaClient({
   }
 });
 
-// ===== الدوال المحلية (Local Functions) =====
-// هذه الدوال تستخدم الوحدات الجديدة داخلياً للحفاظ على التوافق
+// ===== Local Functions =====
+// These functions use the new modules internally to maintain compatibility
 
-// ===== متغيرات البيئة والإعدادات =====
-// Legacy rate limiting (سيتم استبدالها بـ SecurityManager)
+// ===== Environment Variables and Settings =====
+// Legacy rate limiting (will be replaced by SecurityManager)
 const rateLimit = new Map();
-const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;        // عدد الطلبات المسموحة
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;  // نافذة الوقت (بالمللي ثانية)
+const RATE_LIMIT = parseInt(process.env.RATE_LIMIT) || 30;        // Number of allowed requests
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW) || 60000;  // Time window (in milliseconds)
 
 /**
- * تنظيف المدخلات من المستخدمين
- * @param {string} input - النص المدخل
- * @param {number} maxLength - الحد الأقصى للطول (افتراضي: 1000)
- * @returns {string} النص المنظف
+ * Clean user input
+ * @param {string} input - Input text
+ * @param {number} maxLength - Maximum length (default: 1000)
+ * @returns {string} Cleaned text
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 function sanitizeInput(input, maxLength = 1000) {
   return SecurityManager.sanitizeInput(input, maxLength);
 }
 
 /**
- * التحقق من هوية المستخدم
- * @param {Object} ctx - سياق طلب تيليجرام
- * @returns {Promise<Object>} بيانات المستخدم
+ * Authenticate user
+ * @param {Object} ctx - Telegram request context
+ * @returns {Promise<Object>} User data
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 async function authenticateUser(ctx) {
   try {
@@ -101,13 +101,13 @@ async function authenticateUser(ctx) {
 }
 
 /**
- * التحقق من صلاحية الوصول للمنشأة
- * @param {Object} ctx - سياق طلب تيليجرام
- * @param {BigInt} facilityId - معرف المنشأة
- * @param {Array} requiredRoles - الأدوار المطلوبة
- * @returns {Promise<Object>} نتيجة التحقق
+ * Validate facility access
+ * @param {Object} ctx - Telegram request context
+ * @param {BigInt} facilityId - Facility ID
+ * @param {Array} requiredRoles - Required roles
+ * @returns {Promise<Object>} Validation result
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
   try {
@@ -119,13 +119,13 @@ async function validateFacilityAccess(ctx, facilityId, requiredRoles = []) {
 }
 
 /**
- * التحقق من صلاحية الوصول لطلب الصيانة
- * @param {Object} ctx - سياق طلب تيليجرام
- * @param {BigInt} workOrderId - معرف طلب الصيانة
- * @param {Array} requiredRoles - الأدوار المطلوبة
- * @returns {Promise<Object>} نتيجة التحقق
+ * Validate work order access
+ * @param {Object} ctx - Telegram request context
+ * @param {BigInt} workOrderId - Work order ID
+ * @param {Array} requiredRoles - Required roles
+ * @returns {Promise<Object>} Validation result
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
   try {
@@ -137,11 +137,11 @@ async function validateWorkOrderAccess(ctx, workOrderId, requiredRoles = []) {
 }
 
 /**
- * التحقق من صلاحيات الماستر
- * @param {Object} ctx - سياق طلب تيليجرام
- * @returns {boolean} true إذا كان المستخدم ماستر
+ * Validate master access
+ * @param {Object} ctx - Telegram request context
+ * @returns {boolean} true if user is master
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 function validateMasterAccess(ctx) {
   try {
@@ -152,28 +152,28 @@ function validateMasterAccess(ctx) {
   }
 }
 
-// ===== خطط الاشتراك والحدود =====
+// ===== Subscription plans and limits =====
 /**
- * حدود خطط الاشتراك المختلفة
+ * Different subscription plan limits
  * 
- * Free: الخطة المجانية - مناسبة للمنشآت الصغيرة
- * Pro: الخطة الاحترافية - مناسبة للمنشآت المتوسطة
- * Business: الخطة التجارية - مناسبة للمنشآت الكبيرة
+ * Free: Free plan - suitable for small facilities
+ * Pro: Pro plan - suitable for medium facilities
+ * Business: Business plan - suitable for large facilities
  * 
- * ملاحظة: هذه الحدود يتم التحقق منها عبر PlanManager
+ * Note: These limits are checked via PlanManager
  */
 const PLAN_LIMITS = {
   Free: {
-    members: 5,        // عدد الأعضاء المسموح
-    workOrders: 50,    // عدد طلبات الصيانة شهرياً
-    reports: 3,        // عدد التقارير المسموحة
-    reminders: 10      // عدد التذكيرات المسموحة
+    members: 5,        // Number of allowed members
+    workOrders: 50,    // Number of work orders monthly
+    reports: 3,        // Number of allowed reports
+    reminders: 10      // Number of allowed reminders
   },
   Pro: {
-    members: 20,       // عدد الأعضاء المسموح
-    workOrders: 200,   // عدد طلبات الصيانة شهرياً
-    reports: 15,       // عدد التقارير المسموحة
-    reminders: 50      // عدد التذكيرات المسموحة
+    members: 20,       // Number of allowed members
+    workOrders: 200,   // Number of work orders monthly
+    reports: 15,       // Number of allowed reports
+    reminders: 50      // Number of allowed reminders
   },
   Business: {
     members: 100,
@@ -205,33 +205,33 @@ async function getPlanInfo(facilityId) {
 
 // ===== دوال التحقق من المدخلات =====
 /**
- * التحقق من صحة البريد الإلكتروني
- * @param {string} email - البريد الإلكتروني للتحقق
- * @returns {boolean} true إذا كان البريد صحيح
+ * Validate email
+ * @param {string} email - Email to validate
+ * @returns {boolean} true if email is valid
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 function validateEmail(email) {
   return SecurityManager.validateEmail(email);
 }
 
 /**
- * التحقق من صحة رقم الهاتف
- * @param {string} phone - رقم الهاتف للتحقق
- * @returns {boolean} true إذا كان الرقم صحيح
+ * Validate phone number
+ * @param {string} phone - Phone number to validate
+ * @returns {boolean} true if phone number is valid
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 function validatePhone(phone) {
   return SecurityManager.validatePhone(phone);
 }
 
 /**
- * التحقق من صحة الاسم
- * @param {string} name - الاسم للتحقق
- * @returns {boolean} true إذا كان الاسم صحيح
+ * Validate name
+ * @param {string} name - Name to validate
+ * @returns {boolean} true if name is valid
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 function validateName(name) {
   return SecurityManager.validateName(name);
@@ -300,13 +300,13 @@ setInterval(() => {
   FlowManager.cleanupExpiredFlows();
 }, 30 * 60 * 1000); // Check every 30 minutes
 
-// ===== دوال إدارة المستخدمين =====
+// ===== User management functions =====
 /**
- * التحقق من صلاحيات الماستر
- * @param {Object} ctx - سياق طلب تيليجرام
- * @returns {boolean} true إذا كان المستخدم ماستر
+ * Validate master access
+ * @param {Object} ctx - Telegram request context
+ * @returns {boolean} true if user is master
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 const isMaster = (ctx) => {
   try {
@@ -317,11 +317,11 @@ const isMaster = (ctx) => {
 };
 
 /**
- * التأكد من وجود المستخدم والحصول على بياناته
- * @param {Object} ctx - سياق طلب تيليجرام
- * @returns {Promise<Object>} بيانات المستخدم
+ * Ensure user exists and get their data
+ * @param {Object} ctx - Telegram request context
+ * @returns {Promise<Object>} User data
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 async function ensureUser(ctx) {
   const { user } = await SecurityManager.authenticateUser(ctx);
@@ -329,11 +329,11 @@ async function ensureUser(ctx) {
 }
 
 /**
- * الحصول على بيانات المستخدم
- * @param {Object} ctx - سياق طلب تيليجرام
- * @returns {Promise<Object>} بيانات المستخدم
+ * Get user data
+ * @param {Object} ctx - Telegram request context
+ * @returns {Promise<Object>} User data
  * 
- * ملاحظة: هذه دالة محلية تستخدم SecurityManager داخلياً
+ * Note: This is a local function that uses SecurityManager internally
  */
 async function getUser(ctx) {
   const { user } = await SecurityManager.authenticateUser(ctx);
@@ -341,17 +341,17 @@ async function getUser(ctx) {
 }
 
 /**
- * عرض القائمة الرئيسية للبوت
- * @param {Object} ctx - سياق طلب تيليجرام
+ * Display bot main menu
+ * @param {Object} ctx - Telegram request context
  * 
- * هذه الدالة تعرض القائمة الرئيسية حسب حالة المستخدم:
- * - المستخدمين الجدد: خيارات التسجيل والانضمام
- * - المستخدمين النشطين: القائمة الكاملة مع الأزرار الأربعة الرئيسية
+ * This function displays main menu based on user status:
+ * - Users الجدد: خيارات التسجيل والانضمام
+ * - Users النشطين: القائمة الكاملة مع الأزرار الأربعة الرئيسية
  * - الماستر: إضافة لوحة تحكم الماستر
  * 
  * الأزرار الرئيسية:
  * - 🏠 Home: لوحة التحكم الرئيسية
- * - 📊 Reports: التقارير والإحصائيات
+ * - 📊 Reports: التقارير والStatistics
  * - 🔧 Work: إدارة طلبات الصيانة
  * - 👑 Admin: إدارة المنشأة والأعضاء
  */
@@ -416,21 +416,21 @@ async function showMainMenu(ctx) {
 
 // Remove duplicate start handler - using bot.command('start') instead
 
-// ===== الأوامر الرسمية مع الأمان =====
+// ===== Official commands with security =====
 
 /**
- * أمر تسجيل منشأة جديدة
+ * New facility registration command
  * 
- * هذا الأمر يبدأ فلو تسجيل منشأة جديدة:
- * 1. اسم المنشأة (الخطوة 1/4)
- * 2. المدينة (الخطوة 2/4)
- * 3. رقم الهاتف (الخطوة 3/4)
- * 4. اختيار الخطة (الخطوة 4/4)
+ * This command starts new facility registration flow:
+ * 1. Facility name (Step 1/4)
+ * 2. City (Step 2/4)
+ * 3. Phone number (Step 3/4)
+ * 4. Plan selection (Step 4/4)
  * 
- * ملاحظات:
- * - يتم التحقق من الأمان عبر SecurityManager
- * - يتم إدارة الفلو عبر FlowManager
- * - يتم معالجة الأخطاء عبر ErrorHandler
+ * Notes:
+ * - Security is verified via SecurityManager
+ * - Flow is managed via FlowManager
+ * - Errors are handled via ErrorHandler
  */
 bot.command('registerfacility', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
@@ -441,14 +441,14 @@ bot.command('registerfacility', async (ctx) => {
 });
 
 /**
- * أمر الانضمام لمنشأة
+ * Join facility command
  * 
- * هذا الأمر يعرض قائمة المنشآت النشطة المتاحة للانضمام
- * المستخدم يمكنه اختيار منشأة والانضمام إليها
+ * This command shows list of active facilities available to join
+ * User can choose facility and join it
  * 
- * ملاحظات:
- * - يتم التحقق من الأمان عبر SecurityManager
- * - يتم معالجة الأخطاء عبر ErrorHandler
+ * Notes:
+ * - Security is verified via SecurityManager
+ * - Errors are handled via ErrorHandler
  */
 bot.command('join', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
@@ -457,14 +457,14 @@ bot.command('join', async (ctx) => {
 });
 
 /**
- * أمر التبديل بين المنشآت
+ * Switch between facilities command
  * 
- * هذا الأمر يعرض قائمة المنشآت التي ينتمي إليها المستخدم
- * ويسمح له بالتبديل بينها
+ * This command shows list of facilities user belongs to
+ * and allows switching between them
  * 
- * ملاحظات:
- * - يتم التحقق من الأمان عبر SecurityManager
- * - يتم معالجة الأخطاء عبر ErrorHandler
+ * Notes:
+ * - Security is verified via SecurityManager
+ * - Errors are handled via ErrorHandler
  */
 bot.command('switch', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
@@ -612,16 +612,16 @@ bot.action('join_fac_start', async (ctx) => {
 });
 
 /**
- * عرض قائمة المنشآت النشطة للانضمام
- * @param {Object} ctx - سياق طلب تيليجرام
+ * Display list of active facilities to join
+ * @param {Object} ctx - Telegram request context
  * 
- * هذه الدالة تعرض قائمة المنشآت النشطة المتاحة للانضمام
- * المستخدم يمكنه اختيار منشأة والانضمام إليها
+ * This function displays list of active facilities available to join
+ * User can choose facility and join it
  * 
- * ملاحظات:
- * - يتم التحقق من الأمان عبر SecurityManager
- * - يتم معالجة الأخطاء عبر ErrorHandler
- * - يتم تنظيف أسماء المنشآت عبر SecurityManager.sanitizeInput
+ * Notes:
+ * - Security is verified via SecurityManager
+ * - Errors are handled via ErrorHandler
+ * - Facility names are cleaned via SecurityManager.sanitizeInput
  */
 async function requireMembershipOrList(ctx) {
   try {
@@ -954,19 +954,19 @@ bot.action('wo_list', async (ctx) => {
 });
 
 /**
- * التحقق من وجود عضوية نشطة للمستخدم
- * @param {Object} ctx - سياق طلب تيليجرام
- * @returns {Promise<Object>} بيانات المستخدم والعضوية
+ * Check for active user membership
+ * @param {Object} ctx - Telegram request context
+ * @returns {Promise<Object>} User data والعضوية
  * 
- * هذه الدالة تتحقق من أن المستخدم:
+ * This function verifies that user:
  * - لديه عضوية نشطة في منشأة
  * - المنشأة نشطة
- * - المستخدم نشط
+ * - الUser نشط
  * 
- * ملاحظات:
- * - يتم التحقق من الأمان عبر SecurityManager
- * - يتم إرجاع بيانات المستخدم والعضوية
- * - يتم رفع خطأ إذا لم توجد عضوية نشطة
+ * Notes:
+ * - Security is verified via SecurityManager
+ * - يتم إرجاع User data والعضوية
+ * - Throws error if no active membership found
  */
 async function requireActiveMembership(ctx) {
   try {
@@ -1533,14 +1533,14 @@ bot.on('text', async (ctx, next) => {
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
-            return ctx.reply('❌ تم إلغاء طلب المساعدة.', {
-              reply_markup: { inline_keyboard: [[{ text: '💬 التواصل مع الفريق', callback_data: 'team_communication' }]] }
+            return ctx.reply('❌ Cancelled طلب المساعدة.', {
+              reply_markup: { inline_keyboard: [[{ text: '💬 Team Communication', callback_data: 'team_communication' }]] }
             });
           }
           
           const sanitizedProblem = SecurityManager.sanitizeInput(text, 500);
           if (sanitizedProblem.length < 10) {
-            return ctx.reply('⚠️ يرجى وصف المشكلة بتفصيل أكثر (10 أحرف على الأقل). اكتب /cancel للإلغاء.');
+            return ctx.reply('⚠️ Please describe the problem in more detail (minimum 10 characters). Type /cancel to cancel.');
           }
           
           FlowManager.updateData(ctx.from.id.toString(), { problem: sanitizedProblem });
@@ -1548,13 +1548,13 @@ bot.on('text', async (ctx, next) => {
           
           return ctx.reply(
             `✅ **وصف المشكلة**: ${sanitizedProblem}\n\n` +
-            `⚡ **الخطوة 2/2**: ما مدى إلحاح هذه المشكلة؟\n\n` +
-            `اكتب رقم من 1-5:\n` +
-            `1 = عادي\n` +
-            `2 = مهم\n` +
-            `3 = عاجل\n` +
-            `4 = حرج\n` +
-            `5 = طوارئ`,
+            `⚡ **Step 2/2**: How urgent is this problem؟\n\n` +
+            `Enter a number from 1-5:\n` +
+            `1 = Normal\n` +
+            `2 = Important\n` +
+            `3 = Urgent\n` +
+            `4 = Critical\n` +
+            `5 = Emergency`,
             { parse_mode: 'Markdown' }
           );
         }
@@ -1563,22 +1563,22 @@ bot.on('text', async (ctx, next) => {
         if (flowState.step === 2) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
-            return ctx.reply('❌ تم إلغاء طلب المساعدة.', {
-              reply_markup: { inline_keyboard: [[{ text: '💬 التواصل مع الفريق', callback_data: 'team_communication' }]] }
+            return ctx.reply('❌ Cancelled طلب المساعدة.', {
+              reply_markup: { inline_keyboard: [[{ text: '💬 Team Communication', callback_data: 'team_communication' }]] }
             });
           }
           
           const urgencyLevel = parseInt(text);
           if (isNaN(urgencyLevel) || urgencyLevel < 1 || urgencyLevel > 5) {
-            return ctx.reply('⚠️ يرجى اختيار رقم من 1 إلى 5 فقط. اكتب /cancel للإلغاء.');
+            return ctx.reply('⚠️ Please choose a number from 1 to 5 only. Type /cancel to cancel.');
           }
           
           const urgencyLabels = {
-            1: 'عادي',
-            2: 'مهم', 
-            3: 'عاجل',
-            4: 'حرج',
-            5: 'طوارئ'
+            1: 'Normal',
+            2: 'Important', 
+            3: 'Urgent',
+            4: 'Critical',
+            5: 'Emergency'
           };
           
           const urgencyEmojis = {
@@ -1607,11 +1607,11 @@ bot.on('text', async (ctx, next) => {
             });
             
             const helpMessage = 
-              `🆘 **طلب مساعدة من فني**\n\n` +
-              `👤 **الفني**: ${flowState.data.technicianName}\n` +
-              `${flowState.data.urgencyEmoji} **الإلحاح**: ${flowState.data.urgencyLabel}\n\n` +
+              `🆘 **Request Help من Technician**\n\n` +
+              `👤 **الTechnician**: ${flowState.data.technicianName}\n` +
+              `${flowState.data.urgencyEmoji} **Urgency**: ${flowState.data.urgencyLabel}\n\n` +
               `📝 **المشكلة**:\n${flowState.data.problem}\n\n` +
-              `📅 **الوقت**: ${new Date().toLocaleString('ar-EG')}`;
+              `📅 **Time**: ${new Date().toLocaleString('ar-EG')}`;
             
             let sentCount = 0;
             for (const supervisor of supervisors) {
@@ -1621,7 +1621,7 @@ bot.on('text', async (ctx, next) => {
                     supervisor.user.id,
                     BigInt(flowState.data.facilityId),
                     'high_priority_alert',
-                    'طلب مساعدة من فني',
+                    'Request Help من Technician',
                     helpMessage,
                     {
                       type: 'help_request',
@@ -1639,19 +1639,19 @@ bot.on('text', async (ctx, next) => {
             FlowManager.clearFlow(ctx.from.id.toString());
             
             await ctx.reply(
-              `✅ **تم إرسال طلب المساعدة بنجاح!**\n\n` +
-              `📨 تم إرسال الطلب إلى ${sentCount} مشرف/مدير\n` +
-              `${flowState.data.urgencyEmoji} **الإلحاح**: ${flowState.data.urgencyLabel}\n\n` +
-              `سيتم التواصل معك قريباً.`,
+              `✅ **Help request sent successfully!**\n\n` +
+              `📨 Request sent to ${sentCount} Supervisor/مدير\n` +
+              `${flowState.data.urgencyEmoji} **Urgency**: ${flowState.data.urgencyLabel}\n\n` +
+              `You will be contacted soon.`,
               {
                 parse_mode: 'Markdown',
                 reply_markup: {
                   inline_keyboard: [
                     [
                       Markup.button.callback('🛠️ لوحة التحكم', 'technician_dashboard'),
-                      Markup.button.callback('💬 التواصل مع الفريق', 'team_communication')
+                      Markup.button.callback('💬 Team Communication', 'team_communication')
                     ],
-                    [Markup.button.callback('🔙 القائمة الرئيسية', 'back_to_menu')]
+                    [Markup.button.callback('🔙 Main Menu', 'back_to_menu')]
                   ]
                 }
               }
@@ -1660,7 +1660,7 @@ bot.on('text', async (ctx, next) => {
           } catch (error) {
             console.error('Error sending help request:', error);
             FlowManager.clearFlow(ctx.from.id.toString());
-            await ctx.reply('⚠️ حدث خطأ أثناء إرسال طلب المساعدة. يرجى المحاولة مرة أخرى.');
+            await ctx.reply('⚠️ An error occurred أثناء إرسال طلب المساعدة. يرجى المحاولة مرة أخرى.');
           }
         }
       }
@@ -1670,8 +1670,8 @@ bot.on('text', async (ctx, next) => {
         if (flowState.step === 1) {
           if (text.toLowerCase() === '/cancel') {
             FlowManager.clearFlow(ctx.from.id.toString());
-            return ctx.reply('❌ تم إلغاء البحث.', {
-              reply_markup: { inline_keyboard: [[{ text: '🏠 القائمة الرئيسية', callback_data: 'back_to_menu' }]] }
+            return ctx.reply('❌ Cancelled البحث.', {
+              reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'back_to_menu' }]] }
             });
           }
 
@@ -3295,15 +3295,15 @@ function isNotificationEnabledForType(settings, type) {
   return Boolean(settings[key]);
 }
 /**
- * إنشاء إشعار جديد
- * @param {BigInt|string} userId - معرف المستخدم
- * @param {BigInt|string} facilityId - معرف المنشأة (اختياري)
- * @param {string} type - نوع الإشعار
- * @param {string} title - عنوان الإشعار
- * @param {string} message - رسالة الإشعار
- * @param {Object} data - بيانات إضافية (اختياري)
+ * Create new notification
+ * @param {BigInt|string} userId - User ID
+ * @param {BigInt|string} facilityId - Facility ID (optional)
+ * @param {string} type - Notification type
+ * @param {string} title - Notification title
+ * @param {string} message - Notification message
+ * @param {Object} data - Additional data (optional)
  * 
- * أنواع الإشعارات المدعومة:
+ * Supported notification types:
  * - work_order_created: إنشاء طلب صيانة جديد
  * - work_order_status_changed: تغيير حالة طلب الصيانة
  * - work_order_assigned: تعيين طلب صيانة
@@ -3318,10 +3318,10 @@ function isNotificationEnabledForType(settings, type) {
  * - membership_approved: موافقة على العضوية
  * - role_changed: تغيير الدور
  * 
- * ملاحظات:
- * - يتم حفظ الإشعار في قاعدة البيانات
- * - يتم معالجة الأخطاء بشكل آمن
- * - البيانات الإضافية يتم تحويلها إلى JSON
+ * Notes:
+ * - Notification is saved to database
+ * - Errors are handled safely
+ * - Additional data is converted to JSON
  */
 async function createNotification(userId, facilityId, type, title, message, data = null) {
   try {
@@ -3352,21 +3352,21 @@ async function createNotification(userId, facilityId, type, title, message, data
 }
 
 /**
- * إرسال إشعار للمستخدم عبر تيليجرام
- * @param {BigInt|string} userId - معرف المستخدم
- * @param {string} title - عنوان الإشعار
- * @param {string} message - رسالة الإشعار
- * @param {Array} buttons - أزرار تفاعلية (اختياري)
- * @param {string} notificationType - نوع الإشعار للتحقق من الإعدادات (اختياري)
+ * إرسال إشعار للUser عبر تيليجرام
+ * @param {BigInt|string} userId - User ID
+ * @param {string} title - Notification title
+ * @param {string} message - Notification message
+ * @param {Array} buttons - Interactive buttons (optional)
+ * @param {string} notificationType - Notification type للتحقق من الإعدادات (optional)
  * 
- * هذه الدالة ترسل إشعار مباشر للمستخدم عبر تيليجرام
+ * This function sends direct notification to user via Telegram
  * 
- * ملاحظات:
- * - يتم البحث عن المستخدم في قاعدة البيانات
+ * Notes:
+ * - يتم البحث عن الUser في قاعدة البيانات
  * - يتم التحقق من وجود معرف تيليجرام
- * - يتم التحقق من إعدادات الإشعارات (إن تم تمرير نوع الإشعار)
- * - يتم إرسال الرسالة مع الأزرار التفاعلية (إن وجدت)
- * - يتم معالجة الأخطاء بشكل آمن
+ * - يتم التحقق من إعدادات الإشعارات (إن تم تمرير Notification type)
+ * - Sends message with interactive buttons (if any)
+ * - Errors are handled safely
  */
 async function sendTelegramNotification(userId, title, message, buttons = null, notificationType = null) {
   try {
@@ -4184,16 +4184,16 @@ bot.action(/notif_toggle\|(workOrderUpdates|statusChanges|highPriorityAlerts|dai
     });
   } catch (error) {
     console.error('Error toggling notification setting:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء تعديل إعدادات الإشعارات.');
+    await ctx.reply('⚠️ An error occurred أثناء تعديل إعدادات الإشعارات.');
   }
 });
 
-// ===== نظام إدارة الفريق وتعيين المهام =====
+// ===== نظام Team Management وAssign Tasks =====
 
 /**
- * الحصول على قائمة الفنيين المتاحين في المنشأة
- * @param {BigInt} facilityId - معرف المنشأة
- * @returns {Promise<Array>} قائمة الفنيين المتاحين
+ * Get list of available technicians in facility
+ * @param {BigInt} facilityId - Facility ID
+ * @returns {Promise<Array>} List of available technicians
  */
 async function getAvailableTechnicians(facilityId) {
   try {
@@ -4223,11 +4223,11 @@ async function getAvailableTechnicians(facilityId) {
 }
 
 /**
- * تعيين ورك أوردر لفني محدد
- * @param {BigInt} workOrderId - معرف الورك أوردر
- * @param {BigInt} technicianUserId - معرف الفني
- * @param {BigInt} assignedByUserId - معرف المستخدم الذي قام بالتعيين
- * @returns {Promise<boolean>} نجح التعيين أم لا
+ * Assign work order to specific technician
+ * @param {BigInt} workOrderId - Work order ID
+ * @param {BigInt} technicianUserId - Technician ID
+ * @param {BigInt} assignedByUserId - User ID الذي قام بالتعيين
+ * @returns {Promise<boolean>} Whether assignment succeeded
  */
 async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assignedByUserId) {
   try {
@@ -4251,7 +4251,7 @@ async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assign
       }
     });
 
-    // إرسال إشعار للفني
+    // إرسال إشعار للTechnician
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: BigInt(workOrderId) },
       include: { facility: true }
@@ -4261,8 +4261,8 @@ async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assign
       technicianUserId,
       workOrder.facilityId,
       'work_order_assigned',
-      'تم تعيين مهمة جديدة لك',
-      `تم تعيين الورك أوردر #${workOrderId} لك في ${workOrder.facility.name}\n\nالوصف: ${workOrder.description}`,
+      'تم تعيين Importantة جديدة لك',
+      `تم تعيين الورك أوردر #${workOrderId} لك في ${workOrder.facility.name}\n\nDescription: ${workOrder.description}`,
       { workOrderId: workOrderId.toString() }
     );
 
@@ -4274,10 +4274,10 @@ async function assignWorkOrderToTechnician(workOrderId, technicianUserId, assign
 }
 
 /**
- * الحصول على إحصائيات الفني
- * @param {BigInt} technicianUserId - معرف الفني
- * @param {BigInt} facilityId - معرف المنشأة
- * @returns {Promise<Object>} إحصائيات الفني
+ * Get technician statistics
+ * @param {BigInt} technicianUserId - Technician ID
+ * @param {BigInt} facilityId - Facility ID
+ * @returns {Promise<Object>} Technician statistics
  */
 async function getTechnicianStats(technicianUserId, facilityId) {
   try {
@@ -4312,38 +4312,38 @@ async function getTechnicianStats(technicianUserId, facilityId) {
   }
 }
 
-// ===== نظام التذكيرات =====
+// ===== Reminder system =====
 /**
- * إنشاء تذكير جديد
- * @param {BigInt|string} facilityId - معرف المنشأة
- * @param {BigInt|string} createdByUserId - معرف منشئ التذكير
- * @param {string} type - نوع التذكير
- * @param {string} title - عنوان التذكير
- * @param {string} message - رسالة التذكير
- * @param {Date} scheduledFor - تاريخ الاستحقاق
- * @param {string} frequency - تكرار التذكير (افتراضي: once)
- * @param {Object} data - بيانات إضافية (اختياري)
+ * Create new reminder
+ * @param {BigInt|string} facilityId - Facility ID
+ * @param {BigInt|string} createdByUserId - Reminder creator ID
+ * @param {string} type - Reminder type
+ * @param {string} title - Reminder title
+ * @param {string} message - Reminder message
+ * @param {Date} scheduledFor - Due date
+ * @param {string} frequency - Reminder frequency (default: once)
+ * @param {Object} data - Additional data (optional)
  * 
- * أنواع التذكيرات المدعومة:
- * - maintenance: صيانة دورية
- * - inspection: فحص دوري
- * - cleaning: تنظيف دوري
- * - calibration: معايرة دورية
- * - replacement: استبدال دوري
- * - custom: تذكير مخصص
+ * Supported reminder types:
+ * - maintenance: periodic maintenance
+ * - inspection: periodic inspection
+ * - cleaning: periodic cleaning
+ * - calibration: periodic calibration
+ * - replacement: periodic replacement
+ * - custom: custom reminder
  * 
- * تكرارات التذكيرات المدعومة:
- * - once: مرة واحدة
- * - daily: يومياً
- * - weekly: أسبوعياً
- * - monthly: شهرياً
- * - quarterly: كل 3 أشهر
- * - yearly: سنوياً
+ * Supported reminder frequencies:
+ * - once: once
+ * - daily: daily
+ * - weekly: weekly
+ * - monthly: monthly
+ * - quarterly: quarterly
+ * - yearly: yearly
  * 
- * ملاحظات:
- * - يتم حفظ التذكير في قاعدة البيانات
- * - يتم تحويل البيانات الإضافية إلى JSON
- * - يتم معالجة الأخطاء بشكل آمن
+ * Notes:
+ * - Reminder is saved to database
+ * - Additional data is converted to JSON
+ * - Errors are handled safely
  */
 async function createReminder(facilityId, createdByUserId, type, title, message, scheduledFor, frequency = 'once', data = null) {
   try {
@@ -4365,19 +4365,19 @@ async function createReminder(facilityId, createdByUserId, type, title, message,
 }
 
 /**
- * إرسال تذكير لجميع أعضاء المنشأة
- * @param {BigInt|string} facilityId - معرف المنشأة
- * @param {string} title - عنوان التذكير
- * @param {string} message - رسالة التذكير
- * @param {Array} buttons - أزرار تفاعلية (اختياري)
+ * Send reminder to all facility members
+ * @param {BigInt|string} facilityId - Facility ID
+ * @param {string} title - Reminder title
+ * @param {string} message - Reminder message
+ * @param {Array} buttons - Interactive buttons (optional)
  * 
- * هذه الدالة ترسل تذكير لجميع الأعضاء النشطين في المنشأة
+ * This function sends reminder to all active facility members
  * 
- * ملاحظات:
- * - يتم البحث عن جميع الأعضاء في المنشأة
- * - يتم إرسال التذكير لكل عضو لديه معرف تيليجرام
- * - يتم معالجة الأخطاء لكل عضو على حدة
- * - يتم إضافة أزرار تفاعلية (إن وجدت)
+ * Notes:
+ * - Search for all facility members
+ * - Reminder is sent to each member with Telegram ID
+ * - Errors are handled for each member individually
+ * - Interactive buttons are added (if any)
  */
 async function sendReminderToFacility(facilityId, title, message, buttons = null) {
   try {
@@ -4919,7 +4919,7 @@ bot.action('menu_admin', async (ctx) => {
   }
 });
 
-// ===== إدارة الفريق =====
+// ===== Team Management =====
 
 // Team Management Menu
 bot.action('team_management', async (ctx) => {
@@ -4927,12 +4927,12 @@ bot.action('team_management', async (ctx) => {
   try {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
-    // التحقق من الصلاحيات
+    // Check permissions
     if (!['facility_admin', 'supervisor'].includes(membership.role)) {
-      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن للوصول لإدارة الفريق.');
+      return ctx.reply('⚠️ You need supervisor or admin privileges to access team management.');
     }
 
-    // الحصول على إحصائيات الفريق
+    // الحصول على Statistics الفريق
     const teamStats = await prisma.facilityMember.groupBy({
       by: ['role'],
       where: { facilityId: user.activeFacilityId, status: 'active' },
@@ -4953,24 +4953,24 @@ bot.action('team_management', async (ctx) => {
     const totalMembers = Object.values(stats).reduce((sum, count) => sum + count, 0);
 
     const teamMessage = 
-      `🔧 **إدارة الفريق**\n\n` +
-      `👥 **إجمالي الأعضاء**: ${totalMembers}\n\n` +
-      `👑 **المدراء**: ${stats.facility_admin}\n` +
-      `👨‍💼 **المشرفين**: ${stats.supervisor}\n` +
-      `🔧 **الفنيين**: ${stats.technician}\n` +
-      `👤 **المستخدمين**: ${stats.user}\n\n` +
-      `اختر عملية:`;
+      `🔧 **Team Management**\n\n` +
+      `👥 **Total Members**: ${totalMembers}\n\n` +
+      `👑 **Admins**: ${stats.facility_admin}\n` +
+      `👨‍💼 **Supervisors**: ${stats.supervisor}\n` +
+      `🔧 **Technicians**: ${stats.technician}\n` +
+      `👤 **Users**: ${stats.user}\n\n` +
+      `Choose an action:`;
 
     const buttons = [
       [
-        Markup.button.callback('👥 عرض الفريق', 'view_team'),
-        Markup.button.callback('📊 إحصائيات الفنيين', 'technician_stats')
+        Markup.button.callback('👥 View Team', 'view_team'),
+        Markup.button.callback('📊 Technician Stats', 'technician_stats')
       ],
       [
-        Markup.button.callback('🔄 تغيير أدوار', 'change_roles'),
-        Markup.button.callback('📋 توزيع المهام', 'workload_distribution')
+        Markup.button.callback('🔄 Change Roles', 'change_roles'),
+        Markup.button.callback('📋 Workload Distribution', 'workload_distribution')
       ],
-      [Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')]
+      [Markup.button.callback('🔙 Back to Admin', 'menu_admin')]
     ];
 
     await ctx.reply(teamMessage, {
@@ -4979,7 +4979,7 @@ bot.action('team_management', async (ctx) => {
     });
   } catch (error) {
     console.error('Error in team management:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء تحميل إدارة الفريق.');
+    await ctx.reply('⚠️ An error occurred while loading team management.');
   }
 });
 
@@ -4990,7 +4990,7 @@ bot.action('view_team', async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (!['facility_admin', 'supervisor'].includes(membership.role)) {
-      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+      return ctx.reply('⚠️ You need supervisor or admin privileges.');
     }
 
     const members = await prisma.facilityMember.findMany({
@@ -5002,7 +5002,7 @@ bot.action('view_team', async (ctx) => {
       ]
     });
 
-    let teamMessage = `👥 **فريق العمل - ${facility.name}**\n\n`;
+    let teamMessage = `👥 **Work Team - ${facility.name}**\n\n`;
 
     const roleEmojis = {
       facility_admin: '👑',
@@ -5012,28 +5012,28 @@ bot.action('view_team', async (ctx) => {
     };
 
     const roleNames = {
-      facility_admin: 'مدير المنشأة',
-      supervisor: 'مشرف',
-      technician: 'فني',
-      user: 'مستخدم'
+      facility_admin: 'Facility Admin',
+      supervisor: 'Supervisor',
+      technician: 'Technician',
+      user: 'User'
     };
 
     members.forEach((member, index) => {
-      const firstName = member.user.firstName || `مستخدم ${member.user.tgId?.toString() || member.user.id.toString()}`;
+      const firstName = member.user.firstName || `User ${member.user.tgId?.toString() || member.user.id.toString()}`;
       const fullName = member.user.lastName ? `${firstName} ${member.user.lastName}` : firstName;
       const jobTitle = member.user.jobTitle ? ` - ${member.user.jobTitle}` : '';
       
       teamMessage += `${index + 1}. ${roleEmojis[member.role]} **${fullName}**${jobTitle}\n`;
       teamMessage += `   📋 الدور: ${roleNames[member.role]}\n`;
-      teamMessage += `   📅 انضم في: ${member.joinedAt.toLocaleDateString('ar-EG')}\n\n`;
+      teamMessage += `   📅 Joined on: ${member.joinedAt.toLocaleDateString('ar-EG')}\n\n`;
     });
 
     const buttons = [
       [
-        Markup.button.callback('🔧 عرض الفنيين فقط', 'view_technicians'),
-        Markup.button.callback('👨‍💼 عرض المشرفين', 'view_supervisors')
+        Markup.button.callback('🔧 عرض Technicians فقط', 'view_technicians'),
+        Markup.button.callback('👨‍💼 عرض Supervisors', 'view_supervisors')
       ],
-      [Markup.button.callback('🔙 العودة لإدارة الفريق', 'team_management')]
+      [Markup.button.callback('🔙 العودة لTeam Management', 'team_management')]
     ];
 
     await ctx.reply(teamMessage, {
@@ -5042,7 +5042,7 @@ bot.action('view_team', async (ctx) => {
     });
   } catch (error) {
     console.error('Error viewing team:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء عرض الفريق.');
+    await ctx.reply('⚠️ An error occurred أثناء View Team.');
   }
 });
 
@@ -5053,39 +5053,39 @@ bot.action('technician_stats', async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (!['facility_admin', 'supervisor'].includes(membership.role)) {
-      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+      return ctx.reply('⚠️ You need permissions Supervisor أو أدمن.');
     }
 
     const technicians = await getAvailableTechnicians(user.activeFacilityId);
     
     if (technicians.length === 0) {
-      return ctx.reply('ℹ️ لا يوجد فنيين في المنشأة حالياً.', {
+      return ctx.reply('ℹ️ لا يوجد Technicianين في المنشأة حالياً.', {
         reply_markup: {
           inline_keyboard: [[Markup.button.callback('🔙 العودة', 'team_management')]]
         }
       });
     }
 
-    let statsMessage = `📊 **إحصائيات الفنيين - ${facility.name}**\n\n`;
+    let statsMessage = `📊 **Technician Stats - ${facility.name}**\n\n`;
 
     for (const technician of technicians) {
       const stats = await getTechnicianStats(technician.user.id, user.activeFacilityId);
-      const firstName = technician.user.firstName || `فني ${technician.user.tgId?.toString()}`;
+      const firstName = technician.user.firstName || `Technician ${technician.user.tgId?.toString()}`;
       const fullName = technician.user.lastName ? `${firstName} ${technician.user.lastName}` : firstName;
       
       statsMessage += `🔧 **${fullName}**\n`;
-      statsMessage += `   📋 إجمالي المهام: ${stats.total}\n`;
-      statsMessage += `   🔄 قيد التنفيذ: ${stats.in_progress}\n`;
-      statsMessage += `   ✅ مكتملة: ${stats.done}\n`;
-      statsMessage += `   📂 مغلقة: ${stats.closed}\n\n`;
+      statsMessage += `   📋 Total Tasks: ${stats.total}\n`;
+      statsMessage += `   🔄 In Progress: ${stats.in_progress}\n`;
+      statsMessage += `   ✅ Completed: ${stats.done}\n`;
+      statsMessage += `   📂 Closed: ${stats.closed}\n\n`;
     }
 
     const buttons = [
       [
-        Markup.button.callback('📋 توزيع المهام', 'workload_distribution'),
-        Markup.button.callback('🔄 تحديث الإحصائيات', 'technician_stats')
+        Markup.button.callback('📋 توزيع الtasks', 'workload_distribution'),
+        Markup.button.callback('🔄 Update Statistics', 'technician_stats')
       ],
-      [Markup.button.callback('🔙 العودة لإدارة الفريق', 'team_management')]
+      [Markup.button.callback('🔙 العودة لTeam Management', 'team_management')]
     ];
 
     await ctx.reply(statsMessage, {
@@ -5094,7 +5094,7 @@ bot.action('technician_stats', async (ctx) => {
     });
   } catch (error) {
     console.error('Error getting technician stats:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء جلب إحصائيات الفنيين.');
+    await ctx.reply('⚠️ An error occurred أثناء جلب Technician Stats.');
   }
 });
 
@@ -5105,10 +5105,10 @@ bot.action('assign_tasks', async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (!['facility_admin', 'supervisor'].includes(membership.role)) {
-      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن لتعيين المهام.');
+      return ctx.reply('⚠️ You need permissions Supervisor أو أدمن لAssign Tasks.');
     }
 
-    // الحصول على البلاغات غير المعينة
+    // الحصول على Unassigned Work Orders
     const unassignedWorkOrders = await prisma.workOrder.findMany({
       where: { 
         facilityId: user.activeFacilityId,
@@ -5120,15 +5120,15 @@ bot.action('assign_tasks', async (ctx) => {
     });
 
     if (unassignedWorkOrders.length === 0) {
-      return ctx.reply('ℹ️ لا توجد مهام غير معينة حالياً.', {
+      return ctx.reply('ℹ️ No tasks available غير معينة حالياً.', {
         reply_markup: {
-          inline_keyboard: [[Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')]]
+          inline_keyboard: [[Markup.button.callback('🔙 Back to Admin', 'menu_admin')]]
         }
       });
     }
 
-    let tasksMessage = `📋 **تعيين المهام - ${facility.name}**\n\n`;
-    tasksMessage += `📊 **البلاغات غير المعينة**: ${unassignedWorkOrders.length}\n\n`;
+    let tasksMessage = `📋 **Assign Tasks - ${facility.name}**\n\n`;
+    tasksMessage += `📊 **Unassigned Work Orders**: ${unassignedWorkOrders.length}\n\n`;
 
     const buttons = [];
     
@@ -5145,8 +5145,8 @@ bot.action('assign_tasks', async (ctx) => {
     });
 
     buttons.push([
-      Markup.button.callback('🔄 تحديث القائمة', 'assign_tasks'),
-      Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')
+      Markup.button.callback('🔄 Refresh List', 'assign_tasks'),
+      Markup.button.callback('🔙 Back to Admin', 'menu_admin')
     ]);
 
     tasksMessage += `اختر بلاغ لتعيينه:`;
@@ -5157,7 +5157,7 @@ bot.action('assign_tasks', async (ctx) => {
     });
   } catch (error) {
     console.error('Error in assign tasks:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء تحميل مهام التعيين.');
+    await ctx.reply('⚠️ An error occurred أثناء تحميل tasks التعيين.');
   }
 });
 
@@ -5168,7 +5168,7 @@ bot.action(/assign_wo_(\d+)/, async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (!['facility_admin', 'supervisor'].includes(membership.role)) {
-      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+      return ctx.reply('⚠️ You need permissions Supervisor أو أدمن.');
     }
 
     const workOrderId = ctx.match[1];
@@ -5180,18 +5180,18 @@ bot.action(/assign_wo_(\d+)/, async (ctx) => {
     });
 
     if (!workOrder || workOrder.facilityId !== user.activeFacilityId) {
-      return ctx.reply('⚠️ البلاغ غير موجود أو لا تملك صلاحية للوصول إليه.');
+      return ctx.reply('⚠️ البلاغ Not found أو لا تملك صلاحية للوصول إليه.');
     }
 
     if (workOrder.assignee) {
-      return ctx.reply('⚠️ هذا البلاغ معين بالفعل لفني آخر.');
+      return ctx.reply('⚠️ هذا البلاغ معين بالفعل لTechnician آخر.');
     }
 
-    // الحصول على الفنيين المتاحين
+    // الحصول على Technicians المتاحين
     const technicians = await getAvailableTechnicians(user.activeFacilityId);
     
     if (technicians.length === 0) {
-      return ctx.reply('⚠️ لا يوجد فنيين متاحين حالياً.', {
+      return ctx.reply('⚠️ لا يوجد Technicianين متاحين حالياً.', {
         reply_markup: {
           inline_keyboard: [[Markup.button.callback('🔙 العودة', 'assign_tasks')]]
         }
@@ -5199,30 +5199,30 @@ bot.action(/assign_wo_(\d+)/, async (ctx) => {
     }
 
     let assignMessage = `🔧 **تعيين البلاغ #${workOrderId}**\n\n`;
-    assignMessage += `📝 **الوصف**: ${workOrder.description}\n`;
-    assignMessage += `📍 **الموقع**: ${workOrder.location || 'غير محدد'}\n`;
-    assignMessage += `⚡ **الأولوية**: ${workOrder.priority || 'عادية'}\n\n`;
-    assignMessage += `👥 **اختر الفني المناسب**:`;
+    assignMessage += `📝 **Description**: ${workOrder.description}\n`;
+    assignMessage += `📍 **Location**: ${workOrder.location || 'Not specified'}\n`;
+    assignMessage += `⚡ **Priority**: ${workOrder.priority || 'Normalة'}\n\n`;
+    assignMessage += `👥 **اختر الTechnician المناسب**:`;
 
     const buttons = [];
     
     for (const technician of technicians) {
-      const firstName = technician.user.firstName || `فني ${technician.user.tgId?.toString()}`;
+      const firstName = technician.user.firstName || `Technician ${technician.user.tgId?.toString()}`;
       const fullName = technician.user.lastName ? `${firstName} ${technician.user.lastName}` : firstName;
       const jobTitle = technician.user.jobTitle ? ` - ${technician.user.jobTitle}` : '';
       
-      // الحصول على إحصائيات سريعة
+      // الحصول على Statistics سريعة
       const stats = await getTechnicianStats(technician.user.id, user.activeFacilityId);
       
       buttons.push([
         Markup.button.callback(
-          `🔧 ${fullName}${jobTitle} (${stats.in_progress} مهمة نشطة)`,
+          `🔧 ${fullName}${jobTitle} (${stats.in_progress} Importantة نشطة)`,
           `do_assign_${workOrderId}_${technician.user.id}`
         )
       ]);
     }
 
-    buttons.push([Markup.button.callback('🔙 العودة للقائمة', 'assign_tasks')]);
+    buttons.push([Markup.button.callback('🔙 Back to List', 'assign_tasks')]);
 
     await ctx.reply(assignMessage, {
       parse_mode: 'Markdown',
@@ -5230,7 +5230,7 @@ bot.action(/assign_wo_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     console.error('Error showing assignment options:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء عرض خيارات التعيين.');
+    await ctx.reply('⚠️ An error occurred أثناء عرض خيارات التعيين.');
   }
 });
 
@@ -5241,7 +5241,7 @@ bot.action(/do_assign_(\d+)_(\d+)/, async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (!['facility_admin', 'supervisor'].includes(membership.role)) {
-      return ctx.reply('⚠️ تحتاج صلاحيات مشرف أو أدمن.');
+      return ctx.reply('⚠️ You need permissions Supervisor أو أدمن.');
     }
 
     const workOrderId = BigInt(ctx.match[1]);
@@ -5251,7 +5251,7 @@ bot.action(/do_assign_(\d+)_(\d+)/, async (ctx) => {
     const success = await assignWorkOrderToTechnician(workOrderId, technicianUserId, user.id);
 
     if (success) {
-      // الحصول على اسم الفني
+      // الحصول على اسم الTechnician
       const technician = await prisma.user.findUnique({
         where: { id: technicianUserId },
         select: { firstName: true, lastName: true }
@@ -5259,28 +5259,28 @@ bot.action(/do_assign_(\d+)_(\d+)/, async (ctx) => {
 
       const techName = technician ? 
         (technician.lastName ? `${technician.firstName} ${technician.lastName}` : technician.firstName) : 
-        `الفني ${technicianUserId}`;
+        `الTechnician ${technicianUserId}`;
 
       await ctx.reply(
-        `✅ **تم التعيين بنجاح!**\n\n` +
-        `🔧 تم تعيين البلاغ #${workOrderId} للفني: ${techName}\n` +
-        `📱 تم إرسال إشعار للفني\n` +
-        `🔄 تم تحديث حالة البلاغ إلى "قيد التنفيذ"`,
+        `✅ **Assignment Successful!**\n\n` +
+        `🔧 تم تعيين البلاغ #${workOrderId} للTechnician: ${techName}\n` +
+        `📱 تم إرسال إشعار للTechnician\n` +
+        `🔄 تم تحديث حالة البلاغ إلى "In Progress"`,
         {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [
-                Markup.button.callback('📋 تعيين مهمة أخرى', 'assign_tasks'),
-                Markup.button.callback('👥 إدارة الفريق', 'team_management')
+                Markup.button.callback('📋 تعيين Importantة أخرى', 'assign_tasks'),
+                Markup.button.callback('👥 Team Management', 'team_management')
               ],
-              [Markup.button.callback('🔙 العودة للإدارة', 'menu_admin')]
+              [Markup.button.callback('🔙 Back to Admin', 'menu_admin')]
             ]
           }
         }
       );
     } else {
-      await ctx.reply('⚠️ حدث خطأ أثناء تعيين المهمة. يرجى المحاولة مرة أخرى.', {
+      await ctx.reply('⚠️ An error occurred أثناء تعيين الImportantة. يرجى المحاولة مرة أخرى.', {
         reply_markup: {
           inline_keyboard: [[Markup.button.callback('🔙 العودة', 'assign_tasks')]]
         }
@@ -5288,11 +5288,11 @@ bot.action(/do_assign_(\d+)_(\d+)/, async (ctx) => {
     }
   } catch (error) {
     console.error('Error executing assignment:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء تعيين المهمة.');
+    await ctx.reply('⚠️ An error occurred أثناء تعيين الImportantة.');
   }
 });
 
-// ===== لوحة تحكم الفنيين =====
+// ===== Technician Dashboardين =====
 
 // Technician Dashboard
 bot.action('technician_dashboard', async (ctx) => {
@@ -5301,10 +5301,10 @@ bot.action('technician_dashboard', async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (membership.role !== 'technician') {
-      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+      return ctx.reply('⚠️ هذه الميزة متاحة للTechnicianين فقط.');
     }
 
-    // الحصول على مهام الفني
+    // الحصول على tasks الTechnician
     const myTasks = await prisma.workOrder.findMany({
       where: { 
         assignee: user.id.toString(),
@@ -5314,21 +5314,21 @@ bot.action('technician_dashboard', async (ctx) => {
       take: 10
     });
 
-    // إحصائيات الفني
+    // Technician statistics
     const stats = await getTechnicianStats(user.id, user.activeFacilityId);
 
-    let dashboardMessage = `🛠️ **لوحة تحكم الفني**\n\n`;
-    dashboardMessage += `👤 **الفني**: ${user.firstName || 'غير محدد'}\n`;
+    let dashboardMessage = `🛠️ **Technician Dashboard**\n\n`;
+    dashboardMessage += `👤 **الTechnician**: ${user.firstName || 'Not specified'}\n`;
     dashboardMessage += `🏢 **المنشأة**: ${facility.name}\n\n`;
     
-    dashboardMessage += `📊 **إحصائياتي**:\n`;
-    dashboardMessage += `📋 إجمالي المهام: ${stats.total}\n`;
-    dashboardMessage += `🔄 قيد التنفيذ: ${stats.in_progress}\n`;
-    dashboardMessage += `✅ مكتملة: ${stats.done}\n`;
-    dashboardMessage += `📂 مغلقة: ${stats.closed}\n\n`;
+    dashboardMessage += `📊 **My Statistics**:\n`;
+    dashboardMessage += `📋 Total Tasks: ${stats.total}\n`;
+    dashboardMessage += `🔄 In Progress: ${stats.in_progress}\n`;
+    dashboardMessage += `✅ Completed: ${stats.done}\n`;
+    dashboardMessage += `📂 Closed: ${stats.closed}\n\n`;
 
     if (myTasks.length > 0) {
-      dashboardMessage += `🔧 **مهامي الحالية** (آخر ${myTasks.length} مهام):\n\n`;
+      dashboardMessage += `🔧 **tasksي الحالية** (آخر ${myTasks.length} tasks):\n\n`;
       
       myTasks.forEach((task, index) => {
         const statusEmoji = {
@@ -5344,21 +5344,21 @@ bot.action('technician_dashboard', async (ctx) => {
         dashboardMessage += `${index + 1}. ${statusEmoji[task.status]} #${task.id} - ${shortDesc}\n`;
       });
     } else {
-      dashboardMessage += `ℹ️ لا توجد مهام معينة لك حالياً.`;
+      dashboardMessage += `ℹ️ No tasks available معينة لك حالياً.`;
     }
 
     const buttons = [
       [
-        Markup.button.callback('📋 مهامي النشطة', 'my_active_tasks'),
-        Markup.button.callback('📊 تقاريري', 'my_reports')
+        Markup.button.callback('📋 My Active Tasks', 'my_active_tasks'),
+        Markup.button.callback('📊 My Reports', 'my_reports')
       ],
       [
-        Markup.button.callback('✅ تحديث حالة مهمة', 'update_task_status'),
-        Markup.button.callback('💬 التواصل مع الفريق', 'team_communication')
+        Markup.button.callback('✅ تحديث حالة Importantة', 'update_task_status'),
+        Markup.button.callback('💬 Team Communication', 'team_communication')
       ],
       [
-        Markup.button.callback('🔄 تحديث اللوحة', 'technician_dashboard'),
-        Markup.button.callback('🔙 القائمة الرئيسية', 'back_to_menu')
+        Markup.button.callback('🔄 Refresh Dashboard', 'technician_dashboard'),
+        Markup.button.callback('🔙 Main Menu', 'back_to_menu')
       ]
     ];
 
@@ -5368,7 +5368,7 @@ bot.action('technician_dashboard', async (ctx) => {
     });
   } catch (error) {
     console.error('Error in technician dashboard:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء تحميل لوحة التحكم.');
+    await ctx.reply('⚠️ An error occurred أثناء تحميل لوحة التحكم.');
   }
 });
 
@@ -5379,7 +5379,7 @@ bot.action('my_active_tasks', async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (membership.role !== 'technician') {
-      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+      return ctx.reply('⚠️ هذه الميزة متاحة للTechnicianين فقط.');
     }
 
     const activeTasks = await prisma.workOrder.findMany({
@@ -5392,14 +5392,14 @@ bot.action('my_active_tasks', async (ctx) => {
     });
 
     if (activeTasks.length === 0) {
-      return ctx.reply('ℹ️ لا توجد مهام نشطة حالياً.', {
+      return ctx.reply('ℹ️ No tasks available نشطة حالياً.', {
         reply_markup: {
           inline_keyboard: [[Markup.button.callback('🔙 العودة', 'technician_dashboard')]]
         }
       });
     }
 
-    let tasksMessage = `📋 **مهامي النشطة** (${activeTasks.length} مهمة)\n\n`;
+    let tasksMessage = `📋 **My Active Tasks** (${activeTasks.length} Importantة)\n\n`;
 
     const buttons = [];
     
@@ -5414,19 +5414,19 @@ bot.action('my_active_tasks', async (ctx) => {
       
       tasksMessage += `${index + 1}. ${statusEmoji[task.status]} **#${task.id}**\n`;
       tasksMessage += `   📝 ${shortDesc}\n`;
-      tasksMessage += `   📍 ${task.location || 'غير محدد'}\n`;
-      tasksMessage += `   ⚡ ${task.priority || 'عادية'}\n\n`;
+      tasksMessage += `   📍 ${task.location || 'Not specified'}\n`;
+      tasksMessage += `   ⚡ ${task.priority || 'Normalة'}\n\n`;
       
       buttons.push([
         Markup.button.callback(
-          `🔧 العمل على #${task.id}`,
+          `🔧 Work on #${task.id}`,
           `work_on_task_${task.id}`
         )
       ]);
     });
 
     buttons.push([
-      Markup.button.callback('🔄 تحديث القائمة', 'my_active_tasks'),
+      Markup.button.callback('🔄 Refresh List', 'my_active_tasks'),
       Markup.button.callback('🔙 العودة', 'technician_dashboard')
     ]);
 
@@ -5436,7 +5436,7 @@ bot.action('my_active_tasks', async (ctx) => {
     });
   } catch (error) {
     console.error('Error showing active tasks:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء عرض المهام النشطة.');
+    await ctx.reply('⚠️ An error occurred أثناء عرض Active Tasks.');
   }
 });
 
@@ -5447,7 +5447,7 @@ bot.action(/work_on_task_(\d+)/, async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (membership.role !== 'technician') {
-      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+      return ctx.reply('⚠️ هذه الميزة متاحة للTechnicianين فقط.');
     }
 
     const taskId = ctx.match[1];
@@ -5458,39 +5458,39 @@ bot.action(/work_on_task_(\d+)/, async (ctx) => {
     });
 
     if (!task || task.assignee !== user.id.toString()) {
-      return ctx.reply('⚠️ المهمة غير موجودة أو غير معينة لك.');
+      return ctx.reply('⚠️ الImportantة Not foundة أو غير معينة لك.');
     }
 
     const createdBy = task.byUser ? 
       (task.byUser.lastName ? `${task.byUser.firstName} ${task.byUser.lastName}` : task.byUser.firstName) : 
-      'غير محدد';
+      'Not specified';
 
-    let taskMessage = `🔧 **المهمة #${taskId}**\n\n`;
-    taskMessage += `📝 **الوصف**: ${task.description}\n`;
-    taskMessage += `📍 **الموقع**: ${task.location || 'غير محدد'}\n`;
-    taskMessage += `⚡ **الأولوية**: ${task.priority || 'عادية'}\n`;
-    taskMessage += `🏢 **القسم**: ${task.department || 'غير محدد'}\n`;
-    taskMessage += `🔧 **المعدة**: ${task.equipment || 'غير محدد'}\n`;
-    taskMessage += `👤 **طلب بواسطة**: ${createdBy}\n`;
-    taskMessage += `📅 **تاريخ الإنشاء**: ${task.createdAt.toLocaleDateString('ar-EG')}\n`;
-    taskMessage += `📊 **الحالة الحالية**: ${task.status}\n\n`;
+    let taskMessage = `🔧 **الImportantة #${taskId}**\n\n`;
+    taskMessage += `📝 **Description**: ${task.description}\n`;
+    taskMessage += `📍 **Location**: ${task.location || 'Not specified'}\n`;
+    taskMessage += `⚡ **Priority**: ${task.priority || 'Normalة'}\n`;
+    taskMessage += `🏢 **Department**: ${task.department || 'Not specified'}\n`;
+    taskMessage += `🔧 **Equipment**: ${task.equipment || 'Not specified'}\n`;
+    taskMessage += `👤 **Requested by**: ${createdBy}\n`;
+    taskMessage += `📅 **Created Date**: ${task.createdAt.toLocaleDateString('ar-EG')}\n`;
+    taskMessage += `📊 **Current Status**: ${task.status}\n\n`;
     
     if (task.notes) {
-      taskMessage += `📝 **ملاحظات**: ${task.notes}\n\n`;
+      taskMessage += `📝 **Notes**: ${task.notes}\n\n`;
     }
 
     const buttons = [
       [
-        Markup.button.callback('✅ إكمال المهمة', `complete_task_${taskId}`),
-        Markup.button.callback('📝 إضافة ملاحظة', `add_note_${taskId}`)
+        Markup.button.callback('✅ Complete Task', `complete_task_${taskId}`),
+        Markup.button.callback('📝 Add Note', `add_note_${taskId}`)
       ],
       [
-        Markup.button.callback('📸 إضافة صورة', `add_image_${taskId}`),
-        Markup.button.callback('💬 التواصل حول المهمة', `task_communication_${taskId}`)
+        Markup.button.callback('📸 Add Image', `add_image_${taskId}`),
+        Markup.button.callback('💬 التواصل حول الImportantة', `task_communication_${taskId}`)
       ],
       [
-        Markup.button.callback('🔄 تحديث الحالة', `update_status_${taskId}`),
-        Markup.button.callback('🔙 العودة للمهام', 'my_active_tasks')
+        Markup.button.callback('🔄 Update Status', `update_status_${taskId}`),
+        Markup.button.callback('🔙 العودة للtasks', 'my_active_tasks')
       ]
     ];
 
@@ -5500,7 +5500,7 @@ bot.action(/work_on_task_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     console.error('Error showing task details:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء عرض تفاصيل المهمة.');
+    await ctx.reply('⚠️ An error occurred أثناء عرض تفاصيل الImportantة.');
   }
 });
 
@@ -5521,17 +5521,17 @@ bot.action('team_communication', async (ctx) => {
     });
 
     if (teamMembers.length === 0) {
-      return ctx.reply('ℹ️ لا يوجد مشرفين متاحين للتواصل.', {
+      return ctx.reply('ℹ️ لا يوجد Supervisorين متاحين للتواصل.', {
         reply_markup: {
           inline_keyboard: [[Markup.button.callback('🔙 العودة', 'technician_dashboard')]]
         }
       });
     }
 
-    let communicationMessage = `💬 **التواصل مع الفريق**\n\n`;
+    let communicationMessage = `💬 **Team Communication**\n\n`;
     communicationMessage += `🏢 **المنشأة**: ${facility.name}\n`;
-    communicationMessage += `👤 **أنت**: ${user.firstName || 'فني'} (فني)\n\n`;
-    communicationMessage += `👥 **المتاحين للتواصل**:\n\n`;
+    communicationMessage += `👤 **أنت**: ${user.firstName || 'Technician'} (Technician)\n\n`;
+    communicationMessage += `👥 **Available for Contact**:\n\n`;
 
     const buttons = [];
     
@@ -5541,22 +5541,22 @@ bot.action('team_communication', async (ctx) => {
         'supervisor': '👨‍💼'
       };
       
-      const firstName = member.user.firstName || `مستخدم ${member.user.tgId?.toString()}`;
+      const firstName = member.user.firstName || `User ${member.user.tgId?.toString()}`;
       const fullName = member.user.lastName ? `${firstName} ${member.user.lastName}` : firstName;
       
       communicationMessage += `${index + 1}. ${roleEmoji[member.role]} ${fullName}\n`;
       
       buttons.push([
         Markup.button.callback(
-          `💬 مراسلة ${fullName}`,
+          `💬 Message ${fullName}`,
           `message_member_${member.user.id}`
         )
       ]);
     });
 
     buttons.push([
-      Markup.button.callback('📢 رسالة للجميع', 'broadcast_to_team'),
-      Markup.button.callback('❓ طلب مساعدة', 'request_help')
+      Markup.button.callback('📢 Message Everyone', 'broadcast_to_team'),
+      Markup.button.callback('❓ Request Help', 'request_help')
     ]);
     
     buttons.push([Markup.button.callback('🔙 العودة', 'technician_dashboard')]);
@@ -5567,7 +5567,7 @@ bot.action('team_communication', async (ctx) => {
     });
   } catch (error) {
     console.error('Error in team communication:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء تحميل التواصل مع الفريق.');
+    await ctx.reply('⚠️ An error occurred أثناء تحميل Team Communication.');
   }
 });
 
@@ -5578,20 +5578,20 @@ bot.action('request_help', async (ctx) => {
     const { user, facility, membership } = await requireActiveMembership(ctx);
     
     if (membership.role !== 'technician') {
-      return ctx.reply('⚠️ هذه الميزة متاحة للفنيين فقط.');
+      return ctx.reply('⚠️ هذه الميزة متاحة للTechnicianين فقط.');
     }
 
     // Start help request flow
     FlowManager.setFlow(user.tgId.toString(), 'request_help', 1, {
       facilityId: user.activeFacilityId.toString(),
       technicianId: user.id.toString(),
-      technicianName: user.firstName || 'فني'
+      technicianName: user.firstName || 'Technician'
     });
 
     await ctx.reply(
-      `🆘 **طلب مساعدة**\n\n` +
-      `يمكنك طلب المساعدة من المشرفين والإدارة.\n\n` +
-      `📝 **الخطوة 1/2**: اكتب وصف المشكلة التي تحتاج مساعدة فيها:`,
+      `🆘 **Request Help**\n\n` +
+      `يمكنك طلب المساعدة من Supervisors والإدارة.\n\n` +
+      `📝 **Step 1/2**: Write problem description التي تحتاج مساعدة فيها:`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -5601,7 +5601,7 @@ bot.action('request_help', async (ctx) => {
     );
   } catch (error) {
     console.error('Error in request help:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء طلب المساعدة.');
+    await ctx.reply('⚠️ An error occurred أثناء طلب المساعدة.');
   }
 });
 
@@ -7129,12 +7129,12 @@ bot.action('wo_search', async (ctx) => {
     await ctx.reply(
       '🔎 **Search Work Orders**\n\n' +
       'أدخل كلمات البحث أو رقم البلاغ (مثال: #123)\n' +
-      'يمكنك البحث في الوصف والموقع والمعدات ونوع العمل والخدمة.',
+      'يمكنك البحث في Description وLocation والمعدات ونوع العمل والخدمة.',
       { parse_mode: 'Markdown' }
     );
   } catch (error) {
     console.error('Error starting work order search:', error);
-    await ctx.reply('⚠️ حدث خطأ أثناء بدء البحث.');
+    await ctx.reply('⚠️ An error occurred أثناء بدء البحث.');
   }
 });
 
@@ -7578,11 +7578,11 @@ bot.action(/set_role\|(\d+)\|(\w+)/, async (ctx) => {
  * @param {Object} req - طلب HTTP
  * @param {Object} res - استجابة HTTP
  * 
- * ملاحظات:
- * - يتم التحقق من نوع الطلب (POST فقط)
- * - يتم تعيين timeout للطلب (25 ثانية)
- * - يتم معالجة الأخطاء بشكل آمن
- * - يتم تسجيل جميع الطلبات للـ debugging
+ * Notes:
+ * - Checks request type (POST only)
+ * - Sets request timeout (25 seconds)
+ * - Errors are handled safely
+ * - Logs all requests for debugging
  */
 module.exports = async (req, res) => {
   console.log('Webhook received:', { method: req.method, body: req.body });
