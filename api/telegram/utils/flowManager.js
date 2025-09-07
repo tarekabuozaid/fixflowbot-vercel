@@ -25,178 +25,151 @@
  * ============================================================================
  */
 
-// ===== Flow State Storage =====
-// تخزين حالة الفلو في الذاكرة مع الأمان
-// كل مدخل يحتوي على: { flow: string, step: number|string, data: object, userId: string, timestamp: number }
-const flows = new Map();
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 class FlowManager {
   /**
-   * Set user flow state
+   * Set user flow state in the database
    * @param {string} userId - User ID
    * @param {string} flow - Flow type
    * @param {number|string} step - Current step
    * @param {Object} data - Flow data
    */
-  static setFlow(userId, flow, step, data = {}) {
-    const flowData = { 
-      flow, 
-      step, 
-      data, 
-      userId: userId.toString(),
-      timestamp: Date.now() 
+  static async setFlow(userId, flow, step, data = {}) {
+    const userIdStr = userId.toString();
+    const flowData = {
+      flow,
+      step: parseInt(step, 10),
+      data,
     };
-    flows.set(userId.toString(), flowData);
-    console.log(`FlowManager: Set flow for user ${userId}`, flowData);
+    await prisma.flowState.upsert({
+      where: { id: userIdStr },
+      update: { ...flowData, updatedAt: new Date() },
+      create: { id: userIdStr, ...flowData },
+    });
+    console.log(`FlowManager: Set flow for user ${userId} in DB`, flowData);
   }
 
   /**
-   * Get user flow state
+   * Get user flow state from the database
    * @param {string} userId - User ID
-   * @returns {Object|null} Flow state or null if not found
+   * @returns {Promise<Object|null>} Flow state or null if not found
    */
-  static getFlow(userId) {
-    const flow = flows.get(userId.toString());
-    console.log(`FlowManager: Get flow for user ${userId}`, flow);
+  static async getFlow(userId) {
+    const userIdStr = userId.toString();
+    const flow = await prisma.flowState.findUnique({
+      where: { id: userIdStr },
+    });
+
+    if (flow) {
+      // Cleanup expired flows (older than 1 hour)
+      const oneHour = 60 * 60 * 1000;
+      if (new Date() - flow.updatedAt > oneHour) {
+        await this.clearFlow(userIdStr);
+        return null;
+      }
+    }
+    
+    console.log(`FlowManager: Get flow for user ${userId} from DB`, flow);
     return flow;
   }
 
   /**
-   * Update flow step
+   * Update flow step in the database
    * @param {string} userId - User ID
    * @param {number|string} step - New step
    */
-  static updateStep(userId, step) {
-    const flow = flows.get(userId.toString());
+  static async updateStep(userId, step) {
+    const userIdStr = userId.toString();
+    const flow = await this.getFlow(userIdStr);
     if (flow) {
-      flow.step = step;
-      flow.timestamp = Date.now();
-      flows.set(userId.toString(), flow);
-      console.log(`FlowManager: Updated step for user ${userId} to ${step}`, flow);
+      await prisma.flowState.update({
+        where: { id: userIdStr },
+        data: { step: parseInt(step, 10), updatedAt: new Date() },
+      });
+      console.log(`FlowManager: Updated step for user ${userId} to ${step} in DB`);
     } else {
       console.error(`FlowManager: Cannot update step for user ${userId} - flow not found`);
     }
   }
 
   /**
-   * Update flow data
+   * Update flow data in the database
    * @param {string} userId - User ID
    * @param {Object} data - New data to merge
    */
-  static updateData(userId, data) {
-    const flow = flows.get(userId.toString());
+  static async updateData(userId, data) {
+    const userIdStr = userId.toString();
+    const flow = await this.getFlow(userIdStr);
     if (flow) {
-      flow.data = { ...flow.data, ...data };
-      flow.timestamp = Date.now();
-      flows.set(userId.toString(), flow);
-      console.log(`FlowManager: Updated data for user ${userId}`, data, 'New flow state:', flow);
+      const newData = { ...flow.data, ...data };
+      await prisma.flowState.update({
+        where: { id: userIdStr },
+        data: { data: newData, updatedAt: new Date() },
+      });
+      console.log(`FlowManager: Updated data for user ${userId} in DB`, data);
     } else {
       console.error(`FlowManager: Cannot update data for user ${userId} - flow not found`);
     }
   }
 
   /**
-   * Clear user flow
+   * Clear user flow from the database
    * @param {string} userId - User ID
    */
-  static clearFlow(userId) {
-    flows.delete(userId.toString());
+  static async clearFlow(userId) {
+    const userIdStr = userId.toString();
+    await prisma.flowState.delete({
+      where: { id: userIdStr },
+    }).catch(() => {
+      // Ignore if flow doesn't exist
+    });
+    console.log(`FlowManager: Cleared flow for user ${userId} from DB`);
   }
 
   /**
-   * Check if user has active flow
+   * Check if user has an active flow
    * @param {string} userId - User ID
    * @param {string} flowType - Expected flow type (optional)
-   * @returns {boolean} True if user has active flow
+   * @returns {Promise<boolean>} True if user has an active flow
    */
-  static hasActiveFlow(userId, flowType = null) {
-    const flow = flows.get(userId.toString());
+  static async hasActiveFlow(userId, flowType = null) {
+    const flow = await this.getFlow(userId.toString());
     if (!flow) return false;
-    
     if (flowType && flow.flow !== flowType) return false;
-    
-    // Check if flow is not expired (1 hour)
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-    return (now - flow.timestamp) < oneHour;
+    return true;
   }
 
   /**
-   * Validate flow ownership
+   * Validate flow ownership (remains synchronous as it's a simple check)
    * @param {string} userId - User ID
    * @param {Object} flowState - Flow state to validate
    * @returns {boolean} True if flow belongs to user
    */
   static validateFlowOwnership(userId, flowState) {
-    return flowState && flowState.userId === userId.toString();
+    // The ID of flowState is the userId, so this check is straightforward
+    return flowState && flowState.id === userId.toString();
   }
 
   /**
-   * Get flow statistics
-   * @returns {Object} Flow statistics
+   * Clean up all expired flows from the database.
+   * This can be run as a cron job.
    */
-  static getFlowStats() {
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-    
-    let activeFlows = 0;
-    let expiredFlows = 0;
-    const flowTypes = new Map();
-    
-    for (const [userId, flow] of flows.entries()) {
-      if ((now - flow.timestamp) < oneHour) {
-        activeFlows++;
-        flowTypes.set(flow.flow, (flowTypes.get(flow.flow) || 0) + 1);
-      } else {
-        expiredFlows++;
-      }
-    }
-    
-    return {
-      total: flows.size,
-      active: activeFlows,
-      expired: expiredFlows,
-      flowTypes: Object.fromEntries(flowTypes)
-    };
-  }
-
-  /**
-   * Clean up expired flows
-   */
-  static cleanupExpiredFlows() {
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-    
-    for (const [userId, flow] of flows.entries()) {
-      if ((now - flow.timestamp) > oneHour) {
-        flows.delete(userId);
-      }
-    }
-  }
-
-  /**
-   * Get all active flows of a specific type
-   * @param {string} flowType - Flow type to filter
-   * @returns {Array} Array of active flows
-   */
-  static getActiveFlowsByType(flowType) {
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-    const activeFlows = [];
-    
-    for (const [userId, flow] of flows.entries()) {
-      if (flow.flow === flowType && (now - flow.timestamp) < oneHour) {
-        activeFlows.push({ userId, ...flow });
-      }
-    }
-    
-    return activeFlows;
+  static async cleanupExpiredFlows() {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const result = await prisma.flowState.deleteMany({
+      where: {
+        updatedAt: {
+          lt: oneHourAgo,
+        },
+      },
+    });
+    console.log(`FlowManager: Cleaned up ${result.count} expired flows.`);
   }
 }
 
-// Clean up old flows every 30 minutes
-setInterval(() => {
-  FlowManager.cleanupExpiredFlows();
-}, 30 * 60 * 1000);
+// No longer need setInterval for cleanup as it's handled within getFlow
+// or can be a separate cron job.
 
 module.exports = FlowManager;

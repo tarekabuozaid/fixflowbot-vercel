@@ -19,7 +19,7 @@
     "build": "prisma generate",
     "start": "vercel dev",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate",
+    "vercel-build": "prisma migrate deploy && prisma generate",
     "seed": "node scripts/seed.js",
     "test": "node scripts/test-bot.js",
     "import": "node scripts/import-xlsx.js",

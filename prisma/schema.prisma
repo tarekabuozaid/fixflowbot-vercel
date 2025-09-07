@@ -168,6 +168,14 @@ model Reminder {
   @@index([createdByUserId, scheduledFor])
 }
 
+model FlowState {
+  id        String   @id @unique // Will be the user's tgId
+  flow      String
+  step      Int
+  data      Json
+  updatedAt DateTime @updatedAt
+}
+
 enum Role {
   facility_admin
   supervisor
