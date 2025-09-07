@@ -33,6 +33,8 @@ const SecurityManager = require('./utils/security');      // إدارة الأم
 const FlowManager = require('./utils/flowManager');       // إدارة الفلوهات التفاعلية
 const PlanManager = require('./utils/planManager');       // إدارة خطط الاشتراك
 const ErrorHandler = require('./utils/errorHandler');     // معالجة الأخطاء المركزية
+const WorkOrderController = require('./controllers/workOrderController');
+const MainMenuController = require('./controllers/mainMenuController');
 
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {
@@ -128,42 +130,29 @@ bot.command('start', async (ctx) => {
  */
 async function showMainMenu(ctx) {
   try {
-    const { user } = await SecurityManager.authenticateUser(ctx);
-    const buttons = [];
+    const { user, facilityUser } = await SecurityManager.authenticateUser(ctx);
+    const facility = facilityUser ? await prisma.facility.findUnique({ where: { id: facilityUser.facilityId } }) : null;
+
+    const welcomeMessage = facility 
+      ? `👋 Welcome back to **${facility.name}**, ${user.firstName}!`
+      : `👋 Welcome back, ${user.firstName}!`;
+
+    const buttons = await MainMenuController.getMainMenuButtons(user, facilityUser);
     
-    if (user.status === 'active' && user.activeFacilityId) {
-      // === MAIN MENU - 4 MAIN BUTTONS ===
-      buttons.push([
-        Markup.button.callback('🏠 Home', 'menu_home'),
-        Markup.button.callback('📊 Reports', 'menu_reports')
-      ]);
-      
-      buttons.push([
-        Markup.button.callback('🔧 Work', 'menu_work'),
-        Markup.button.callback('👑 Admin', 'menu_admin')
-      ]);
-      
-      // === MASTER SECTION ===
-      if (SecurityManager.validateMasterAccess(ctx)) {
-        buttons.push([
-          Markup.button.callback('🛠 Master Panel', 'master_panel'),
-          Markup.button.callback('👑 Master Dashboard', 'master_dashboard')
-        ]);
+    const messagePayload = {
+      text: `${welcomeMessage}\n\nHow can I help you today?`,
+      options: {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons },
       }
+    };
+
+    // Use editMessageText if it's a callback, otherwise reply
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(messagePayload.text, messagePayload.options);
     } else {
-      // === NEW USERS SECTION ===
-      buttons.push([
-        Markup.button.callback('🏢 Register Facility', 'reg_fac_start'),
-        Markup.button.callback('🔗 Join Facility', 'join_fac_start')
-      ]);
+      await ctx.reply(messagePayload.text, messagePayload.options);
     }
-    
-    // === HELP SECTION ===
-    buttons.push([Markup.button.callback('❓ Help', 'help')]);
-    
-    await ctx.reply('👋 Welcome to FixFlow! Choose a category:', {
-      reply_markup: { inline_keyboard: buttons }
-    });
   } catch (error) {
     await ErrorHandler.handleError(error, ctx, 'showMainMenu');
   }
@@ -1177,5 +1166,3 @@ bot.on('text', async (ctx, next) => {
     await ErrorHandler.handleError(error, ctx, 'text_handler');
   }
 });
-
-// ...existing code...
