@@ -1,6 +1,8 @@
 const { Markup } = require('telegraf');
-const { prisma } = require('../../../prisma/client');
-const SecurityManager = require('./security');
+const { PrismaClient } = require('@prisma/client');
+const SecurityManager = require('../utils/security');
+
+const prisma = new PrismaClient();
 
 class MainMenuController {
   /**
