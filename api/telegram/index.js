@@ -1909,10 +1909,16 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Export the bot for Vercel
-module.exports = (req, res) => {
-  if (req.method === 'POST') {
-    bot.handleUpdate(req.body, res);
-  } else {
-    res.status(200).send('Bot is running');
+module.exports = async (req, res) => {
+  try {
+    if (req.method === 'POST') {
+      console.log('📨 Received webhook update:', JSON.stringify(req.body, null, 2));
+      await bot.handleUpdate(req.body, res);
+    } else {
+      res.status(200).send('Bot is running');
+    }
+  } catch (error) {
+    console.error('❌ Webhook error:', error);
+    res.status(500).send('Internal Server Error');
   }
 };
