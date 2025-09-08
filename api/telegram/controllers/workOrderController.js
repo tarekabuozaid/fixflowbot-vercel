@@ -516,9 +516,9 @@ class WorkOrderController {
    */
   static async getWorkOrderStats(facilityId) {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekAgo = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const monthAgo = new Date(todayStart.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const [
       total,
@@ -541,7 +541,7 @@ class WorkOrderController {
       prisma.workOrder.count({ where: { facilityId, priority: 'high' } }),
       prisma.workOrder.count({ where: { facilityId, priority: 'medium' } }),
       prisma.workOrder.count({ where: { facilityId, priority: 'low' } }),
-      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: today } } }),
+      prisma.workOrder.count({ where: { facilityId, createdAt: { gte: todayStart } } }),
       prisma.workOrder.count({ where: { facilityId, createdAt: { gte: weekAgo } } }),
       prisma.workOrder.count({ where: { facilityId, createdAt: { gte: monthAgo } } })
     ]);

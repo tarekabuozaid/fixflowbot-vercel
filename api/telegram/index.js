@@ -129,7 +129,17 @@ bot.command('start', async (ctx) => {
  */
 async function showMainMenu(ctx) {
   try {
-    const { user, facilityUser } = await SecurityManager.authenticateUser(ctx);
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    
+    // Get facility membership
+    const facilityUser = await prisma.facilityMember.findFirst({
+      where: { 
+        userId: user.id, 
+        facilityId: user.activeFacilityId,
+        status: 'active'
+      }
+    });
+    
     const facility = facilityUser ? await prisma.facility.findUnique({ where: { id: facilityUser.facilityId } }) : null;
 
     const welcomeMessage = facility 
@@ -1846,3 +1856,32 @@ bot.action('master_list_members', async (ctx) => {
     );
   }, ctx, 'master_list_members_handler');
 });
+
+// ===== تشغيل البوت =====
+// تشغيل البوت في وضع polling للاختبار المحلي
+if (process.env.NODE_ENV !== 'production') {
+  console.log('🚀 Starting bot in polling mode...');
+  bot.launch()
+    .then(() => {
+      console.log('✅ Bot started successfully in polling mode');
+      console.log('📱 Bot is ready to receive messages');
+    })
+    .catch((error) => {
+      console.error('❌ Failed to start bot:', error.message);
+      process.exit(1);
+    });
+
+  // إيقاف البوت بشكل أنيق عند إغلاق العملية
+  process.once('SIGINT', () => {
+    console.log('🛑 Stopping bot...');
+    bot.stop('SIGINT');
+  });
+  
+  process.once('SIGTERM', () => {
+    console.log('🛑 Stopping bot...');
+    bot.stop('SIGTERM');
+  });
+} else {
+  // في الإنتاج، البوت يعمل عبر webhook
+  console.log('🌐 Bot configured for webhook mode');
+}
