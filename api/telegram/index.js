@@ -1553,6 +1553,24 @@ bot.action(/regfac_plan\|(.+)/, async (ctx) => {
     const flowState = await FlowManager.getFlow(ctx.from.id.toString());
     if (!flowState || flowState.flow !== 'reg_fac' || flowState.step !== 4) {
       console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+      
+      // If flow is null or invalid, redirect to start registration
+      if (!flowState) {
+        return ctx.reply(
+          '⚠️ **Registration Session Expired**\n\n' +
+          'Your registration session has expired. Please start over.',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.callback('🏢 Start Registration', 'reg_fac_start')],
+                [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+              ]
+            }
+          }
+        );
+      }
+      
       await FlowManager.clearFlow(ctx.from.id.toString());
       return ctx.reply('⚠️ Invalid registration flow. Please start over.');
     }
@@ -1580,7 +1598,7 @@ bot.action(/regfac_plan\|(.+)/, async (ctx) => {
             city: data.city,
             phone: data.phone,
             isDefault: false,
-            planTier: planType.toLowerCase(),
+            planTier: planType.charAt(0).toUpperCase() + planType.slice(1).toLowerCase(),
             status: 'pending'
           }
         });
@@ -1648,14 +1666,20 @@ bot.action(/regfac_plan\|(.+)/, async (ctx) => {
       console.log(`Facility registered successfully: #${facility.id.toString()} for user ${ctx.from.id}`);
     } catch (error) {
       console.error('Error creating facility:', error);
-      await FlowManager.clearFlow(ctx.from.id.toString());
+      
+      // Don't clear flow immediately - let user retry
       await ctx.editMessageText(
         '⚠️ **Registration Error**\n\n' +
-        'An error occurred while registering your facility. Please try again later.',
+        'An error occurred while registering your facility.\n\n' +
+        '**Error:** ' + error.message + '\n\n' +
+        'Please try again or contact support.',
         {
           parse_mode: 'Markdown',
           reply_markup: {
-            inline_keyboard: [[Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]]
+            inline_keyboard: [
+              [Markup.button.callback('🔄 Try Again', 'regfac_plan|' + planType)],
+              [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+            ]
           }
         }
       );
