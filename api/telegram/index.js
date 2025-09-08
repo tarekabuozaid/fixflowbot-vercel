@@ -338,6 +338,51 @@ bot.command('members', async (ctx) => {
   }, ctx, 'members_command');
 });
 
+bot.command('master', async (ctx) => {
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
+    
+    const [pendingFacilities, pendingRequests, totalFacilities, activeFacilities, totalUsers] = await Promise.all([
+      prisma.facility.count({ where: { status: 'pending' } }),
+      prisma.facilityMember.count({ where: { status: 'pending' } }),
+      prisma.facility.count(),
+      prisma.facility.count({ where: { status: 'active' } }),
+      prisma.user.count()
+    ]);
+    
+    await ctx.reply(
+      `👑 **Master Admin Control Panel**\n\n` +
+      `📊 **System Statistics:**\n` +
+      `• Total Facilities: ${totalFacilities}\n` +
+      `• Active Facilities: ${activeFacilities}\n` +
+      `• Pending Facilities: ${pendingFacilities}\n` +
+      `• Total Users: ${totalUsers}\n` +
+      `• Pending Requests: ${pendingRequests}\n\n` +
+      `🎛️ **Master Controls:**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('🏢 Manage Facilities', 'master_facilities'),
+              Markup.button.callback('👥 Manage Users', 'master_users')
+            ],
+            [
+              Markup.button.callback('📊 System Reports', 'master_reports'),
+              Markup.button.callback('⚙️ System Settings', 'master_settings')
+            ],
+            [
+              Markup.button.callback('🔍 Quick Actions', 'master_quick'),
+              Markup.button.callback('📋 Pending Items', 'master_pending')
+            ],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_command');
+});
+
 bot.command('approve', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     SecurityManager.validateMasterAccess(ctx);
@@ -385,6 +430,168 @@ bot.command('deny', async (ctx) => {
     SecurityManager.validateMasterAccess(ctx);
     await ctx.reply('❌ **Deny Requests**\n\nUse /approve to review and manage pending requests.');
   }, ctx, 'deny_command');
+});
+
+// === Master Custom Commands ===
+bot.command('stats', async (ctx) => {
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
+    
+    const [totalFacilities, activeFacilities, pendingFacilities, totalUsers, totalWorkOrders] = await Promise.all([
+      prisma.facility.count(),
+      prisma.facility.count({ where: { status: 'active' } }),
+      prisma.facility.count({ where: { status: 'pending' } }),
+      prisma.user.count(),
+      prisma.workOrder.count()
+    ]);
+    
+    await ctx.reply(
+      `📊 **System Statistics**\n\n` +
+      `🏢 **Facilities:**\n` +
+      `• Total: ${totalFacilities}\n` +
+      `• Active: ${activeFacilities}\n` +
+      `• Pending: ${pendingFacilities}\n\n` +
+      `👥 **Users:** ${totalUsers}\n` +
+      `📋 **Work Orders:** ${totalWorkOrders}\n\n` +
+      `🕐 **Last Updated:** ${new Date().toLocaleString()}`,
+      { parse_mode: 'Markdown' }
+    );
+  }, ctx, 'stats_command');
+});
+
+bot.command('approveall', async (ctx) => {
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
+    
+    const pendingFacilities = await prisma.facility.findMany({
+      where: { status: 'pending' },
+      include: {
+        members: {
+          where: { role: 'facility_admin' },
+          include: { user: true }
+        }
+      }
+    });
+    
+    if (pendingFacilities.length === 0) {
+      return ctx.reply('✅ No pending facilities to approve.');
+    }
+    
+    let approvedCount = 0;
+    for (const facility of pendingFacilities) {
+      await prisma.facility.update({
+        where: { id: facility.id },
+        data: { status: 'active' }
+      });
+      
+      // Notify facility admin
+      const admin = facility.members[0]?.user;
+      if (admin) {
+        try {
+          await bot.telegram.sendMessage(
+            admin.tgId,
+            `🎉 **Facility Approved!**\n\n` +
+            `Your facility **${facility.name}** has been approved and is now active!\n\n` +
+            `You can now start using all features of FixFlow.`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (notifyError) {
+          console.error('Failed to notify facility admin:', notifyError);
+        }
+      }
+      
+      approvedCount++;
+    }
+    
+    await ctx.reply(
+      `✅ **Bulk Approval Complete!**\n\n` +
+      `Approved ${approvedCount} facilities successfully.\n\n` +
+      `All facility admins have been notified.`,
+      { parse_mode: 'Markdown' }
+    );
+  }, ctx, 'approveall_command');
+});
+
+bot.command('broadcast', async (ctx) => {
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
+    
+    const message = ctx.message.text.replace('/broadcast', '').trim();
+    
+    if (!message) {
+      return ctx.reply(
+        '📢 **Broadcast Message**\n\n' +
+        'Usage: `/broadcast Your message here`\n\n' +
+        'This will send the message to all users in the system.',
+        { parse_mode: 'Markdown' }
+      );
+    }
+    
+    const users = await prisma.user.findMany({
+      select: { tgId: true, firstName: true }
+    });
+    
+    let sentCount = 0;
+    let failedCount = 0;
+    
+    for (const user of users) {
+      try {
+        await bot.telegram.sendMessage(
+          user.tgId,
+          `📢 **System Broadcast**\n\n${message}`,
+          { parse_mode: 'Markdown' }
+        );
+        sentCount++;
+      } catch (error) {
+        console.error(`Failed to send broadcast to user ${user.tgId}:`, error);
+        failedCount++;
+      }
+    }
+    
+    await ctx.reply(
+      `📢 **Broadcast Complete!**\n\n` +
+      `✅ Sent: ${sentCount}\n` +
+      `❌ Failed: ${failedCount}\n` +
+      `👥 Total Users: ${users.length}`,
+      { parse_mode: 'Markdown' }
+    );
+  }, ctx, 'broadcast_command');
+});
+
+bot.command('health', async (ctx) => {
+  return ErrorHandler.safeExecute(async () => {
+    SecurityManager.validateMasterAccess(ctx);
+    
+    try {
+      // Test database connection
+      await prisma.$queryRaw`SELECT 1`;
+      
+      const [facilityCount, userCount] = await Promise.all([
+        prisma.facility.count(),
+        prisma.user.count()
+      ]);
+      
+      await ctx.reply(
+        `🏥 **System Health Check**\n\n` +
+        `✅ Database: Connected\n` +
+        `✅ Bot: Running\n` +
+        `📊 Facilities: ${facilityCount}\n` +
+        `👥 Users: ${userCount}\n` +
+        `🕐 Check Time: ${new Date().toLocaleString()}\n\n` +
+        `🟢 **System Status: HEALTHY**`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      await ctx.reply(
+        `🏥 **System Health Check**\n\n` +
+        `❌ Database: Connection Failed\n` +
+        `❌ Error: ${error.message}\n` +
+        `🕐 Check Time: ${new Date().toLocaleString()}\n\n` +
+        `🔴 **System Status: UNHEALTHY**`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+  }, ctx, 'health_command');
 });
 
 bot.command('setrole', async (ctx) => {
@@ -2043,6 +2250,306 @@ bot.action(/reject_fac\|(\d+)/, async (ctx) => {
     }
     
   }, ctx, 'reject_facility_handler');
+});
+
+// === Master Panel Handlers ===
+bot.action('master_facilities', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const facilities = await prisma.facility.findMany({
+      include: {
+        members: {
+          where: { role: 'facility_admin' },
+          include: { user: true }
+        },
+        _count: {
+          select: { members: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    let facilitiesText = '🏢 **All Facilities Management**\n\n';
+    const buttons = [];
+    
+    facilities.forEach((facility, index) => {
+      const admin = facility.members[0]?.user;
+      const statusEmoji = facility.status === 'active' ? '✅' : '⏳';
+      const statusText = facility.status === 'active' ? 'Active' : 'Pending';
+      
+      facilitiesText += `${index + 1}. ${statusEmoji} **${facility.name}**\n`;
+      facilitiesText += `   📍 ${facility.city || 'No city'}\n`;
+      facilitiesText += `   👥 Members: ${facility._count.members}\n`;
+      facilitiesText += `   👤 Admin: ${admin ? `${admin.firstName} ${admin.lastName || ''}` : 'Unknown'}\n`;
+      facilitiesText += `   📅 Created: ${facility.createdAt.toLocaleDateString()}\n\n`;
+      
+      if (facility.status === 'pending') {
+        buttons.push([
+          Markup.button.callback(`✅ Approve ${facility.name}`, `approve_fac|${facility.id}`),
+          Markup.button.callback(`❌ Reject ${facility.name}`, `reject_fac|${facility.id}`)
+        ]);
+      } else {
+        buttons.push([
+          Markup.button.callback(`🔧 Manage ${facility.name}`, `manage_fac|${facility.id}`),
+          Markup.button.callback(`📊 Stats ${facility.name}`, `stats_fac|${facility.id}`)
+        ]);
+      }
+    });
+    
+    buttons.push([
+      Markup.button.callback('🔙 Back to Master Panel', 'master_panel'),
+      Markup.button.callback('🏠 Main Menu', 'back_to_menu')
+    ]);
+    
+    await ctx.editMessageText(facilitiesText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  }, ctx, 'master_facilities_handler');
+});
+
+bot.action('master_users', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const users = await prisma.user.findMany({
+      include: {
+        facilityMemberships: {
+          include: { facility: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20 // Show last 20 users
+    });
+    
+    let usersText = '👥 **User Management**\n\n';
+    const buttons = [];
+    
+    users.forEach((user, index) => {
+      const facilityCount = user.facilityMemberships.length;
+      const activeFacilities = user.facilityMemberships.filter(fm => fm.facility.status === 'active').length;
+      
+      usersText += `${index + 1}. **${user.firstName} ${user.lastName || ''}**\n`;
+      usersText += `   🆔 ID: ${user.tgId}\n`;
+      usersText += `   🏢 Facilities: ${activeFacilities}/${facilityCount}\n`;
+      usersText += `   📅 Joined: ${user.createdAt.toLocaleDateString()}\n\n`;
+      
+      buttons.push([
+        Markup.button.callback(`👤 View ${user.firstName}`, `view_user|${user.id}`),
+        Markup.button.callback(`🔧 Manage ${user.firstName}`, `manage_user|${user.id}`)
+      ]);
+    });
+    
+    buttons.push([
+      Markup.button.callback('🔙 Back to Master Panel', 'master_panel'),
+      Markup.button.callback('🏠 Main Menu', 'back_to_menu')
+    ]);
+    
+    await ctx.editMessageText(usersText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  }, ctx, 'master_users_handler');
+});
+
+bot.action('master_reports', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const [totalFacilities, activeFacilities, pendingFacilities, totalUsers, totalWorkOrders] = await Promise.all([
+      prisma.facility.count(),
+      prisma.facility.count({ where: { status: 'active' } }),
+      prisma.facility.count({ where: { status: 'pending' } }),
+      prisma.user.count(),
+      prisma.workOrder.count()
+    ]);
+    
+    const recentFacilities = await prisma.facility.findMany({
+      where: { createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    });
+    
+    let reportsText = '📊 **System Reports**\n\n';
+    reportsText += `📈 **Overview:**\n`;
+    reportsText += `• Total Facilities: ${totalFacilities}\n`;
+    reportsText += `• Active Facilities: ${activeFacilities}\n`;
+    reportsText += `• Pending Facilities: ${pendingFacilities}\n`;
+    reportsText += `• Total Users: ${totalUsers}\n`;
+    reportsText += `• Total Work Orders: ${totalWorkOrders}\n\n`;
+    
+    if (recentFacilities.length > 0) {
+      reportsText += `🆕 **Recent Facilities (Last 7 days):**\n`;
+      recentFacilities.forEach((facility, index) => {
+        reportsText += `${index + 1}. ${facility.name} - ${facility.status}\n`;
+      });
+    }
+    
+    const buttons = [
+      [Markup.button.callback('📈 Detailed Analytics', 'detailed_analytics')],
+      [Markup.button.callback('📋 Export Data', 'export_data')],
+      [
+        Markup.button.callback('🔙 Back to Master Panel', 'master_panel'),
+        Markup.button.callback('🏠 Main Menu', 'back_to_menu')
+      ]
+    ];
+    
+    await ctx.editMessageText(reportsText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  }, ctx, 'master_reports_handler');
+});
+
+bot.action('master_settings', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    await ctx.editMessageText(
+      '⚙️ **System Settings**\n\n' +
+      '🔧 **Available Settings:**\n' +
+      '• Bot Configuration\n' +
+      '• Database Management\n' +
+      '• Security Settings\n' +
+      '• Notification Settings\n\n' +
+      '⚠️ Advanced settings require direct database access.',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔧 Bot Config', 'bot_config')],
+            [Markup.button.callback('🗄️ Database Tools', 'db_tools')],
+            [
+              Markup.button.callback('🔙 Back to Master Panel', 'master_panel'),
+              Markup.button.callback('🏠 Main Menu', 'back_to_menu')
+            ]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_settings_handler');
+});
+
+bot.action('master_quick', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    await ctx.editMessageText(
+      '🔍 **Quick Actions**\n\n' +
+      '⚡ **Common Tasks:**\n' +
+      '• Approve all pending facilities\n' +
+      '• System health check\n' +
+      '• Send broadcast message\n' +
+      '• Emergency actions\n\n' +
+      'Select an action:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('✅ Approve All Facilities', 'approve_all_facilities')],
+            [Markup.button.callback('🏥 System Health Check', 'system_health')],
+            [Markup.button.callback('📢 Broadcast Message', 'broadcast_message')],
+            [
+              Markup.button.callback('🔙 Back to Master Panel', 'master_panel'),
+              Markup.button.callback('🏠 Main Menu', 'back_to_menu')
+            ]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_quick_handler');
+});
+
+bot.action('master_pending', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const [pendingFacilities, pendingRequests] = await Promise.all([
+      prisma.facility.count({ where: { status: 'pending' } }),
+      prisma.facilityMember.count({ where: { status: 'pending' } })
+    ]);
+    
+    let pendingText = '📋 **Pending Items Dashboard**\n\n';
+    
+    if (pendingFacilities > 0) {
+      pendingText += `🏢 **Pending Facilities:** ${pendingFacilities}\n`;
+    }
+    
+    if (pendingRequests > 0) {
+      pendingText += `👥 **Pending Join Requests:** ${pendingRequests}\n`;
+    }
+    
+    if (pendingFacilities === 0 && pendingRequests === 0) {
+      pendingText += '🎉 No pending items!';
+    }
+    
+    const buttons = [];
+    
+    if (pendingFacilities > 0) {
+      buttons.push([Markup.button.callback('🏢 Review Facilities', 'master_list_fac')]);
+    }
+    
+    if (pendingRequests > 0) {
+      buttons.push([Markup.button.callback('👥 Review Requests', 'master_list_members')]);
+    }
+    
+    buttons.push([
+      Markup.button.callback('🔙 Back to Master Panel', 'master_panel'),
+      Markup.button.callback('🏠 Main Menu', 'back_to_menu')
+    ]);
+    
+    await ctx.editMessageText(pendingText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
+  }, ctx, 'master_pending_handler');
+});
+
+// Back to master panel handler
+bot.action('master_panel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const [pendingFacilities, pendingRequests, totalFacilities, activeFacilities, totalUsers] = await Promise.all([
+      prisma.facility.count({ where: { status: 'pending' } }),
+      prisma.facilityMember.count({ where: { status: 'pending' } }),
+      prisma.facility.count(),
+      prisma.facility.count({ where: { status: 'active' } }),
+      prisma.user.count()
+    ]);
+    
+    await ctx.editMessageText(
+      `👑 **Master Admin Control Panel**\n\n` +
+      `📊 **System Statistics:**\n` +
+      `• Total Facilities: ${totalFacilities}\n` +
+      `• Active Facilities: ${activeFacilities}\n` +
+      `• Pending Facilities: ${pendingFacilities}\n` +
+      `• Total Users: ${totalUsers}\n` +
+      `• Pending Requests: ${pendingRequests}\n\n` +
+      `🎛️ **Master Controls:**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('🏢 Manage Facilities', 'master_facilities'),
+              Markup.button.callback('👥 Manage Users', 'master_users')
+            ],
+            [
+              Markup.button.callback('📊 System Reports', 'master_reports'),
+              Markup.button.callback('⚙️ System Settings', 'master_settings')
+            ],
+            [
+              Markup.button.callback('🔍 Quick Actions', 'master_quick'),
+              Markup.button.callback('📋 Pending Items', 'master_pending')
+            ],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_panel_handler');
 });
 
 // ===== تشغيل البوت =====
