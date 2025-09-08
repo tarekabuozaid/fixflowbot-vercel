@@ -1832,22 +1832,57 @@ bot.action('master_list_fac', async (ctx) => {
   return ErrorHandler.safeExecute(async () => {
     console.log(`Master list facilities requested by user ${ctx.from.id}`);
     
-    await ctx.editMessageText(
-      '🏢 **Facility Management**\n\n' +
-      'Master facility management features are currently under development.\n\n' +
-      'This will include:\n' +
-      '• Review pending facilities\n' +
-      '• Approve/reject registrations\n' +
-      '• Facility oversight',
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
-          ]
+    // Get pending facilities
+    const pendingFacilities = await prisma.facility.findMany({
+      where: { status: 'pending' },
+      include: {
+        members: {
+          where: { role: 'facility_admin' },
+          include: { user: true }
         }
-      }
-    );
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    if (pendingFacilities.length === 0) {
+      return ctx.editMessageText(
+        '🏢 **Facility Management**\n\n' +
+        '✅ No pending facilities to review.',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+            ]
+          }
+        }
+      );
+    }
+    
+    let facilitiesText = '🏢 **Pending Facilities for Review**\n\n';
+    const buttons = [];
+    
+    pendingFacilities.forEach((facility, index) => {
+      const admin = facility.members[0]?.user;
+      facilitiesText += `${index + 1}. **${facility.name}**\n`;
+      facilitiesText += `   📍 City: ${facility.city || 'Not specified'}\n`;
+      facilitiesText += `   📞 Phone: ${facility.phone || 'Not specified'}\n`;
+      facilitiesText += `   💼 Plan: ${facility.planTier}\n`;
+      facilitiesText += `   👤 Admin: ${admin ? `${admin.firstName} ${admin.lastName || ''}` : 'Unknown'}\n`;
+      facilitiesText += `   📅 Created: ${facility.createdAt.toLocaleDateString()}\n\n`;
+      
+      buttons.push([
+        Markup.button.callback(`✅ Approve ${facility.name}`, `approve_fac|${facility.id}`),
+        Markup.button.callback(`❌ Reject ${facility.name}`, `reject_fac|${facility.id}`)
+      ]);
+    });
+    
+    buttons.push([Markup.button.callback('🏠 Main Menu', 'back_to_menu')]);
+    
+    await ctx.editMessageText(facilitiesText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons }
+    });
   }, ctx, 'master_list_fac_handler');
 });
 
@@ -1877,6 +1912,137 @@ bot.action('master_list_members', async (ctx) => {
       }
     );
   }, ctx, 'master_list_members_handler');
+});
+
+// === Facility Approval Handlers ===
+bot.action(/approve_fac\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const facilityId = BigInt(ctx.match[1]);
+    console.log(`Approving facility ${facilityId} by user ${ctx.from.id}`);
+    
+    // Update facility status to active
+    const facility = await prisma.facility.update({
+      where: { id: facilityId },
+      data: { status: 'active' },
+      include: {
+        members: {
+          where: { role: 'facility_admin' },
+          include: { user: true }
+        }
+      }
+    });
+    
+    const admin = facility.members[0]?.user;
+    
+    await ctx.editMessageText(
+      `✅ **Facility Approved Successfully!**\n\n` +
+      `🏢 **Name:** ${facility.name}\n` +
+      `📍 **City:** ${facility.city}\n` +
+      `📞 **Phone:** ${facility.phone}\n` +
+      `💼 **Plan:** ${facility.planTier}\n` +
+      `👤 **Admin:** ${admin ? `${admin.firstName} ${admin.lastName || ''}` : 'Unknown'}\n\n` +
+      `The facility is now active and ready to use!`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏢 Review More Facilities', 'master_list_fac')],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+    
+    // Notify facility admin
+    if (admin) {
+      try {
+        await bot.telegram.sendMessage(
+          admin.tgId,
+          `🎉 **Facility Approved!**\n\n` +
+          `Your facility **${facility.name}** has been approved and is now active!\n\n` +
+          `You can now start using all features of FixFlow.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (notifyError) {
+        console.error('Failed to notify facility admin:', notifyError);
+      }
+    }
+    
+  }, ctx, 'approve_facility_handler');
+});
+
+bot.action(/reject_fac\|(\d+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const facilityId = BigInt(ctx.match[1]);
+    console.log(`Rejecting facility ${facilityId} by user ${ctx.from.id}`);
+    
+    // Get facility info before deletion
+    const facility = await prisma.facility.findUnique({
+      where: { id: facilityId },
+      include: {
+        members: {
+          where: { role: 'facility_admin' },
+          include: { user: true }
+        }
+      }
+    });
+    
+    if (!facility) {
+      return ctx.reply('❌ Facility not found.');
+    }
+    
+    const admin = facility.members[0]?.user;
+    
+    // Delete facility and related data
+    await prisma.$transaction(async (tx) => {
+      // Delete facility members
+      await tx.facilityMember.deleteMany({
+        where: { facilityId }
+      });
+      
+      // Delete facility
+      await tx.facility.delete({
+        where: { id: facilityId }
+      });
+    });
+    
+    await ctx.editMessageText(
+      `❌ **Facility Rejected**\n\n` +
+      `🏢 **Name:** ${facility.name}\n` +
+      `📍 **City:** ${facility.city}\n` +
+      `👤 **Admin:** ${admin ? `${admin.firstName} ${admin.lastName || ''}` : 'Unknown'}\n\n` +
+      `The facility registration has been rejected and removed from the system.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏢 Review More Facilities', 'master_list_fac')],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+    
+    // Notify facility admin
+    if (admin) {
+      try {
+        await bot.telegram.sendMessage(
+          admin.tgId,
+          `❌ **Facility Registration Rejected**\n\n` +
+          `Unfortunately, your facility registration for **${facility.name}** has been rejected.\n\n` +
+          `Please contact support if you have any questions.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (notifyError) {
+        console.error('Failed to notify facility admin:', notifyError);
+      }
+    }
+    
+  }, ctx, 'reject_facility_handler');
 });
 
 // ===== تشغيل البوت =====
