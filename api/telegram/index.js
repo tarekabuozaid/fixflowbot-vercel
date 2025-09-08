@@ -767,6 +767,291 @@ bot.action('wo_list', async (ctx) => {
   }, ctx, 'wo_list');
 });
 
+// === Work Order Flow Action Handlers ===
+
+/**
+ * Handle work type selection (Step 1 → Step 2)
+ * Pattern: wo_type|maintenance, wo_type|repair, etc.
+ */
+bot.action(/wo_type\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const workType = ctx.match[1];
+    console.log(`Work type selected: ${workType} by user ${ctx.from.id}`);
+    
+    // Get current flow state
+    const flowState = await FlowManager.getFlow(ctx.from.id.toString());
+    if (!flowState || flowState.flow !== 'wo_new') {
+      console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    console.log(`Updating flow data for user ${ctx.from.id} with typeOfWork: ${workType}`);
+    await FlowManager.updateData(ctx.from.id.toString(), { typeOfWork: workType });
+    await FlowManager.updateStep(ctx.from.id.toString(), 2);
+    
+    // Step 2: Choose service type
+    const serviceTypeButtons = [
+      [Markup.button.callback('🔍 Preventive', 'wo_service|preventive')],
+      [Markup.button.callback('🚨 Corrective', 'wo_service|corrective')],
+      [Markup.button.callback('⚡ Emergency', 'wo_service|emergency')],
+      [Markup.button.callback('🔧 Routine', 'wo_service|routine')],
+      [Markup.button.callback('📋 Inspection', 'wo_service|inspection')],
+      [Markup.button.callback('❌ Cancel', 'wo_cancel')]
+    ];
+    
+    await ctx.editMessageText(
+      `🔧 **Work Order Creation (2/6)**\n\n` +
+      `✅ **Type:** ${workType}\n\n` +
+      `🛠️ **Choose service type:**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: serviceTypeButtons }
+      }
+    );
+  }, ctx, 'wo_type_handler');
+});
+
+/**
+ * Handle service type selection (Step 2 → Step 3)
+ * Pattern: wo_service|preventive, wo_service|corrective, etc.
+ */
+bot.action(/wo_service\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const serviceType = ctx.match[1];
+    console.log(`Service type selected: ${serviceType} by user ${ctx.from.id}`);
+    
+    // Get current flow state
+    const flowState = await FlowManager.getFlow(ctx.from.id.toString());
+    if (!flowState || flowState.flow !== 'wo_new' || flowState.step !== 2) {
+      console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    console.log(`Updating flow data for user ${ctx.from.id} with typeOfService: ${serviceType}`);
+    await FlowManager.updateData(ctx.from.id.toString(), { typeOfService: serviceType });
+    await FlowManager.updateStep(ctx.from.id.toString(), 3);
+    
+    // Step 3: Choose priority
+    const priorityButtons = [
+      [Markup.button.callback('🔴 High Priority', 'wo_priority|high')],
+      [Markup.button.callback('🟡 Medium Priority', 'wo_priority|medium')],
+      [Markup.button.callback('🟢 Low Priority', 'wo_priority|low')],
+      [Markup.button.callback('⚡ Critical', 'wo_priority|critical')],
+      [Markup.button.callback('❌ Cancel', 'wo_cancel')]
+    ];
+    
+    const updatedFlow = await FlowManager.getFlow(ctx.from.id.toString());
+    await ctx.editMessageText(
+      `🔧 **Work Order Creation (3/6)**\n\n` +
+      `✅ **Type:** ${updatedFlow.data.typeOfWork}\n` +
+      `✅ **Service:** ${serviceType}\n\n` +
+      `⚡ **Choose priority level:**`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: priorityButtons }
+      }
+    );
+  }, ctx, 'wo_service_handler');
+});
+
+/**
+ * Handle priority selection (Step 3 → Step 4)
+ * Pattern: wo_priority|high, wo_priority|medium, etc.
+ */
+bot.action(/wo_priority\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const priority = ctx.match[1];
+    console.log(`Priority selected: ${priority} by user ${ctx.from.id}`);
+    
+    // Get current flow state
+    const flowState = await FlowManager.getFlow(ctx.from.id.toString());
+    if (!flowState || flowState.flow !== 'wo_new' || flowState.step !== 3) {
+      console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    console.log(`Updating flow data for user ${ctx.from.id} with priority: ${priority}`);
+    await FlowManager.updateData(ctx.from.id.toString(), { priority });
+    await FlowManager.updateStep(ctx.from.id.toString(), 4);
+    
+    const updatedFlow = await FlowManager.getFlow(ctx.from.id.toString());
+    await ctx.editMessageText(
+      `🔧 **Work Order Creation (4/6)**\n\n` +
+      `✅ **Type:** ${updatedFlow.data.typeOfWork}\n` +
+      `✅ **Service:** ${updatedFlow.data.typeOfService}\n` +
+      `✅ **Priority:** ${priority}\n\n` +
+      `📍 **Please enter the location where the work is needed**\n` +
+      `(e.g., "Building A, Room 101", "Parking Lot", "Main Entrance")\n\n` +
+      `Type your response below or type /cancel to exit:`,
+      {
+        parse_mode: 'Markdown'
+      }
+    );
+  }, ctx, 'wo_priority_handler');
+});
+
+/**
+ * Handle work order confirmation
+ */
+bot.action('wo_confirm', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Work order confirmation by user ${ctx.from.id}`);
+    
+    // Get current flow state
+    const flowState = await FlowManager.getFlow(ctx.from.id.toString());
+    if (!flowState || flowState.flow !== 'wo_new') {
+      console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+      return ctx.reply('⚠️ Invalid flow state. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    try {
+      const { user } = await requireActiveMembership(ctx);
+      const data = flowState.data;
+      
+      // Create work order in database
+      const workOrder = await prisma.workOrder.create({
+        data: {
+          facilityId: user.activeFacilityId,
+          createdByUserId: user.id,
+          typeOfWork: data.typeOfWork,
+          typeOfService: data.typeOfService,
+          priority: data.priority,
+          location: data.location,
+          equipment: data.equipment,
+          description: data.description,
+          status: 'open'
+        }
+      });
+      
+      // Clear flow state
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      
+      await ctx.editMessageText(
+        `✅ **Work Order Created Successfully!**\n\n` +
+        `🆔 **Order ID:** #${workOrder.id.toString()}\n` +
+        `📋 **Type:** ${data.typeOfWork}\n` +
+        `🛠️ **Service:** ${data.typeOfService}\n` +
+        `⚡ **Priority:** ${data.priority}\n` +
+        `📍 **Location:** ${data.location}\n` +
+        `🔧 **Equipment:** ${data.equipment || 'Not specified'}\n` +
+        `📝 **Description:** ${data.description}\n\n` +
+        `📅 **Created:** ${new Date().toLocaleString('en-US', { timeZone: 'UTC' })}\n` +
+        `🔵 **Status:** Open\n\n` +
+        `Your work order has been submitted and assigned to the appropriate team.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.callback('📋 View My Orders', 'wo_list')],
+              [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+            ]
+          }
+        }
+      );
+      
+      console.log(`Work order created successfully: #${workOrder.id.toString()} for user ${ctx.from.id}`);
+    } catch (error) {
+      console.error('Error creating work order:', error);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      
+      if (error.message === 'no_active_facility') {
+        await ctx.editMessageText(
+          `⚠️ **No Active Facility**\n\n` +
+          `You need to be a member of a facility to create work orders.\n\n` +
+          `Please register or join a facility first.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.callback('🏢 Register Facility', 'reg_fac_start')],
+                [Markup.button.callback('🔗 Join Facility', 'join_fac_start')],
+                [Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]
+              ]
+            }
+          }
+        );
+      } else {
+        await ctx.editMessageText(
+          '⚠️ **Error Creating Work Order**\n\n' +
+          'An error occurred while creating your work order. Please try again later.',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]]
+            }
+          }
+        );
+      }
+    }
+  }, ctx, 'wo_confirm_handler');
+});
+
+/**
+ * Handle work order cancellation
+ */
+bot.action('wo_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Work order cancelled by user ${ctx.from.id}`);
+    
+    // Clear flow state
+    await FlowManager.clearFlow(ctx.from.id.toString());
+    
+    await ctx.editMessageText(
+      '❌ **Work Order Cancelled**\n\n' +
+      'Your work order creation has been cancelled. No changes were made.',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('➕ New Work Order', 'wo_new')],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'wo_cancel_handler');
+});
+
 /**
  * التحقق من وجود عضوية نشطة للمستخدم
  * @param {Object} ctx - سياق طلب تيليجرام
@@ -802,6 +1087,37 @@ async function requireActiveMembership(ctx) {
     return { user, member: membership };
   } catch (error) {
     console.error('requireActiveMembership error:', error);
+    throw error;
+  }
+}
+
+/**
+ * إنشاء إشعار جديد
+ * @param {BigInt} userId - معرف المستخدم
+ * @param {BigInt} facilityId - معرف المنشأة
+ * @param {string} type - نوع الإشعار
+ * @param {string} title - عنوان الإشعار
+ * @param {string} message - نص الإشعار
+ * @param {Object} data - بيانات إضافية
+ */
+async function createNotification(userId, facilityId, type, title, message, data = null) {
+  try {
+    const notification = await prisma.notification.create({
+      data: {
+        userId,
+        facilityId,
+        type,
+        title,
+        message,
+        data,
+        isRead: false
+      }
+    });
+    
+    console.log(`Notification created: ${notification.id} for user ${userId}`);
+    return notification;
+  } catch (error) {
+    console.error('Error creating notification:', error);
     throw error;
   }
 }
@@ -1213,4 +1529,233 @@ bot.on('text', async (ctx, next) => {
   } catch (error) {
     await ErrorHandler.handleError(error, ctx, 'text_handler');
   }
+});
+
+// === Facility Registration Plan Selection Handler ===
+bot.action(/regfac_plan\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    const planType = ctx.match[1];
+    console.log(`Plan selected: ${planType} by user ${ctx.from.id}`);
+    
+    // Get current flow state
+    const flowState = await FlowManager.getFlow(ctx.from.id.toString());
+    if (!flowState || flowState.flow !== 'reg_fac' || flowState.step !== 4) {
+      console.error(`Invalid flow state for user ${ctx.from.id}:`, flowState);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Invalid registration flow. Please start over.');
+    }
+    
+    // Validate flow ownership
+    if (!FlowManager.validateFlowOwnership(ctx.from.id.toString(), flowState)) {
+      console.error(`Flow ownership validation failed for user ${ctx.from.id}`);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      return ctx.reply('⚠️ Session expired. Please start over.');
+    }
+    
+    try {
+      const { user } = await SecurityManager.authenticateUser(ctx);
+      
+      // Update flow data with plan
+      await FlowManager.updateData(ctx.from.id.toString(), { plan: planType });
+      const updatedFlow = await FlowManager.getFlow(ctx.from.id.toString());
+      const data = updatedFlow.data;
+      
+      // Create facility in database
+      const facility = await prisma.$transaction(async (tx) => {
+        const f = await tx.facility.create({
+          data: {
+            name: data.name,
+            city: data.city,
+            phone: data.phone,
+            isActive: false,
+            isDefault: false,
+            planTier: planType.toLowerCase(),
+            status: 'pending'
+          }
+        });
+        
+        await tx.facilityMember.create({
+          data: { 
+            userId: user.id, 
+            facilityId: f.id, 
+            role: 'facility_admin',
+            status: 'active'
+          }
+        });
+        
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            activeFacilityId: f.id,
+            requestedRole: 'facility_admin'
+          }
+        });
+        
+        return f;
+      });
+      
+      // Clear flow state
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      
+      await ctx.editMessageText(
+        `✅ **Facility Registration Submitted!**\n\n` +
+        `🏢 **Name:** ${facility.name}\n` +
+        `🏙️ **City:** ${data.city}\n` +
+        `📞 **Phone:** ${data.phone}\n` +
+        `💼 **Plan:** ${planType}\n` +
+        `📅 **Status:** Pending (awaiting activation)\n\n` +
+        `Your facility registration has been submitted for review. You will receive a notification once it's approved.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+            ]
+          }
+        }
+      );
+      
+      // Notify master if configured
+      if (process.env.MASTER_ID) {
+        try {
+          await bot.telegram.sendMessage(
+            process.env.MASTER_ID,
+            `🆕 **New Facility Registration**\n\n` +
+            `👤 **User:** ${ctx.from.id} (@${ctx.from.username || 'unknown'})\n` +
+            `🏢 **Facility:** ${facility.name}\n` +
+            `🏙️ **City:** ${data.city}\n` +
+            `📞 **Phone:** ${data.phone}\n` +
+            `💼 **Plan:** ${planType}\n` +
+            `🆔 **Facility ID:** #${facility.id.toString()}`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (notifyError) {
+          console.error('Failed to notify master:', notifyError);
+        }
+      }
+      
+      console.log(`Facility registered successfully: #${facility.id.toString()} for user ${ctx.from.id}`);
+    } catch (error) {
+      console.error('Error creating facility:', error);
+      await FlowManager.clearFlow(ctx.from.id.toString());
+      await ctx.editMessageText(
+        '⚠️ **Registration Error**\n\n' +
+        'An error occurred while registering your facility. Please try again later.',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[Markup.button.callback('🔙 Back to Menu', 'back_to_menu')]]
+          }
+        }
+      );
+    }
+  }, ctx, 'regfac_plan_handler');
+});
+
+// === Facility Registration Cancel Handler ===
+bot.action('regfac_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Facility registration cancelled by user ${ctx.from.id}`);
+    
+    // Clear flow state
+    await FlowManager.clearFlow(ctx.from.id.toString());
+    
+    await ctx.editMessageText(
+      '❌ **Facility Registration Cancelled**\n\n' +
+      'Your facility registration has been cancelled. No changes were made.',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏢 Register Facility', 'reg_fac_start')],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'regfac_cancel_handler');
+});
+
+// === User Registration Cancel Handler ===
+bot.action('user_reg_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`User registration cancelled by user ${ctx.from.id}`);
+    
+    // Clear flow state
+    await FlowManager.clearFlow(ctx.from.id.toString());
+    
+    await ctx.editMessageText(
+      '❌ **User Registration Cancelled**\n\n' +
+      'Your registration has been cancelled. No changes were made.',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔗 Join Facility', 'join_fac_start')],
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'user_reg_cancel_handler');
+});
+
+// === Back to Menu Handler ===
+bot.action('back_to_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Back to menu requested by user ${ctx.from.id}`);
+    
+    // Clear any active flow state
+    await FlowManager.clearFlow(ctx.from.id.toString());
+    
+    await showMainMenu(ctx);
+  }, ctx, 'back_to_menu_handler');
+});
+
+// === Help Handler ===
+bot.action('help', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Help requested by user ${ctx.from.id}`);
+    
+    const helpText = 
+      `❓ **FixFlow Bot Help**\n\n` +
+      `🔧 **What is FixFlow?**\n` +
+      `FixFlow is a comprehensive maintenance management system that helps facilities manage work orders, track issues, and coordinate maintenance tasks.\n\n` +
+      `🏢 **Facility Management:**\n` +
+      `• Register a new facility\n` +
+      `• Join an existing facility\n` +
+      `• Switch between facilities\n` +
+      `• Manage facility members\n\n` +
+      `📋 **Work Orders:**\n` +
+      `• Create new work orders\n` +
+      `• Track existing orders\n` +
+      `• View order status\n` +
+      `• Receive notifications\n\n` +
+      `👥 **User Roles:**\n` +
+      `• **User:** Submit work orders\n` +
+      `• **Technician:** Manage assigned orders\n` +
+      `• **Supervisor:** Oversee operations\n` +
+      `• **Admin:** Full facility management\n\n` +
+      `📞 **Support:**\n` +
+      `Contact your facility administrator for assistance with specific issues.`;
+    
+    await ctx.editMessageText(helpText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+        ]
+      }
+    });
+  }, ctx, 'help_handler');
 });
