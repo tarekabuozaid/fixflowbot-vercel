@@ -1579,7 +1579,6 @@ bot.action(/regfac_plan\|(.+)/, async (ctx) => {
             name: data.name,
             city: data.city,
             phone: data.phone,
-            isActive: false,
             isDefault: false,
             planTier: planType.toLowerCase(),
             status: 'pending'
@@ -1885,3 +1884,6 @@ if (process.env.NODE_ENV !== 'production') {
   // في الإنتاج، البوت يعمل عبر webhook
   console.log('🌐 Bot configured for webhook mode');
 }
+
+// Export the bot for Vercel
+module.exports = bot;
