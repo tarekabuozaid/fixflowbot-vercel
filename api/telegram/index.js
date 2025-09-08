@@ -1615,8 +1615,7 @@ bot.action(/regfac_plan\|(.+)/, async (ctx) => {
         await tx.user.update({
           where: { id: user.id },
           data: {
-            activeFacilityId: f.id,
-            requestedRole: 'facility_admin'
+            activeFacilityId: f.id
           }
         });
         
@@ -1910,4 +1909,10 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Export the bot for Vercel
-module.exports = bot;
+module.exports = (req, res) => {
+  if (req.method === 'POST') {
+    bot.handleUpdate(req.body, res);
+  } else {
+    res.status(200).send('Bot is running');
+  }
+};
