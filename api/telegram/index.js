@@ -1759,3 +1759,90 @@ bot.action('help', async (ctx) => {
     });
   }, ctx, 'help_handler');
 });
+
+// === Admin and Master Panel Handlers ===
+
+/**
+ * Admin Panel Handler
+ */
+bot.action('admin_panel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Admin panel requested by user ${ctx.from.id}`);
+    
+    await ctx.editMessageText(
+      '👑 **Admin Panel**\n\n' +
+      'Administrative features are currently under development.\n\n' +
+      'Available admin functions will include:\n' +
+      '• User management\n' +
+      '• Facility settings\n' +
+      '• Work order oversight\n' +
+      '• Reports and analytics',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'admin_panel_handler');
+});
+
+/**
+ * Master List Facilities Handler
+ */
+bot.action('master_list_fac', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Master list facilities requested by user ${ctx.from.id}`);
+    
+    await ctx.editMessageText(
+      '🏢 **Facility Management**\n\n' +
+      'Master facility management features are currently under development.\n\n' +
+      'This will include:\n' +
+      '• Review pending facilities\n' +
+      '• Approve/reject registrations\n' +
+      '• Facility oversight',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_list_fac_handler');
+});
+
+/**
+ * Master List Members Handler  
+ */
+bot.action('master_list_members', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  return ErrorHandler.safeExecute(async () => {
+    console.log(`Master list members requested by user ${ctx.from.id}`);
+    
+    await ctx.editMessageText(
+      '👥 **Member Management**\n\n' +
+      'Master member management features are currently under development.\n\n' +
+      'This will include:\n' +
+      '• Review pending member requests\n' +
+      '• Approve/reject memberships\n' +
+      '• Member oversight',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🏠 Main Menu', 'back_to_menu')]
+          ]
+        }
+      }
+    );
+  }, ctx, 'master_list_members_handler');
+});
