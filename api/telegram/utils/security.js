@@ -87,7 +87,7 @@ class SecurityManager {
       rateLimit.set(userId, userRateLimit);
       
       // Get or create user from database
-      const tgId = BigInt(userId);
+      const tgId = userId.toString();
       let user = await prisma.user.findUnique({ where: { tgId } });
       
       let isNew = false;

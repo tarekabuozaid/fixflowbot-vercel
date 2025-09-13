@@ -4,7 +4,14 @@
   "description": "Telegram bot for FixFlow integration - نظام إدارة الصيانة الشامل",
   "author": "Tarek Abu Ozaid",
   "license": "MIT",
-  "keywords": ["telegram", "bot", "maintenance", "management", "fixflow", "arabic"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "maintenance",
+    "management",
+    "fixflow",
+    "arabic"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/tarekabuozaid/fixflowbot"
@@ -12,7 +19,7 @@
   "homepage": "https://fixflowbot.vercel.app",
   "type": "commonjs",
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "vercel dev",
@@ -27,16 +34,16 @@
     "webhook:set": "node scripts/set-webhook.js"
   },
   "dependencies": {
-    "@prisma/client": "^5.10.0",
-    "dotenv": "^17.2.1",
+    "@prisma/client": "^6.16.1",
+    "dotenv": "^17.2.2",
     "node-fetch": "^3.3.2",
     "telegraf": "^4.16.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@types/node": "^20.10.5",
-    "prisma": "^5.10.0",
+    "@types/node": "^24.3.3",
+    "prisma": "^6.16.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.9.2"
   }
 }
