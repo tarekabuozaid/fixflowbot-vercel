@@ -3,13 +3,13 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id               Int             @id @default(autoincrement())
-  tgId             String?         @unique
+  id               BigInt          @id @default(autoincrement())
+  tgId             BigInt?         @unique
   firstName        String?
   lastName         String?         // إضافة لقب المستخدم
   username         String?         // اسم المستخدم على تليجرام
@@ -19,7 +19,7 @@ model User {
   status           UserStatus      @default(pending)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
-  activeFacilityId Int?
+  activeFacilityId BigInt?
   memberships      FacilityMember[]
   switchRequests   FacilitySwitchRequest[]
   statusUpdates    StatusHistory[]
@@ -32,7 +32,7 @@ model User {
 }
 
 model Facility {
-  id            Int             @id @default(autoincrement())
+  id            BigInt          @id @default(autoincrement())
   name          String          @unique
   city          String?
   phone         String?
@@ -50,9 +50,9 @@ model Facility {
 }
 
 model FacilityMember {
-  id         Int      @id @default(autoincrement())
-  userId     Int
-  facilityId Int
+  id         BigInt   @id @default(autoincrement())
+  userId     BigInt
+  facilityId BigInt
   role       Role     @default(user)
   status     String   @default("active")
   joinedAt   DateTime @default(now())
@@ -64,9 +64,9 @@ model FacilityMember {
 }
 
 model WorkOrder {
-  id              Int             @id @default(autoincrement())
-  facilityId      Int
-  createdByUserId Int?
+  id              BigInt          @id @default(autoincrement())
+  facilityId      BigInt
+  createdByUserId BigInt?
   status          WorkOrderStatus @default(pending)
   typeOfWork      String?
   typeOfService   String?
@@ -93,12 +93,12 @@ model WorkOrder {
 }
 
 model StatusHistory {
-  id              Int       @id @default(autoincrement())
-  workOrderId     Int
+  id              BigInt    @id @default(autoincrement())
+  workOrderId     BigInt
   oldStatus       String
   newStatus       String
   createdAt       DateTime  @default(now())
-  updatedByUserId Int
+  updatedByUserId BigInt
   updatedByUser   User      @relation(fields: [updatedByUserId], references: [id])
   workOrder       WorkOrder @relation(fields: [workOrderId], references: [id])
 
@@ -106,22 +106,22 @@ model StatusHistory {
 }
 
 model FacilitySwitchRequest {
-  id             Int           @id @default(autoincrement())
-  userId         Int
-  facilityId     Int
+  id             BigInt        @id @default(autoincrement())
+  userId         BigInt
+  facilityId     BigInt
   requestedRole  Role          @default(user)
   status         RequestStatus @default(pending)
   requestDate    DateTime      @default(now())
   approvedAt     DateTime?
-  approvedBy     Int?
+  approvedBy     BigInt?
   user           User          @relation(fields: [userId], references: [id])
   facility       Facility      @relation(fields: [facilityId], references: [id])
 }
 
 model Notification {
-  id          Int              @id @default(autoincrement())
-  userId      Int
-  facilityId  Int?
+  id          BigInt           @id @default(autoincrement())
+  userId      BigInt
+  facilityId  BigInt?
   type        NotificationType
   title       String
   message     String
@@ -136,8 +136,8 @@ model Notification {
 }
 
 model Report {
-  id          Int         @id @default(autoincrement())
-  facilityId  Int
+  id          BigInt      @id @default(autoincrement())
+  facilityId  BigInt
   type        ReportType
   period      String      // daily, weekly, monthly
   data        Json
@@ -148,9 +148,9 @@ model Report {
 }
 
 model Reminder {
-  id              Int              @id @default(autoincrement())
-  facilityId      Int
-  createdByUserId Int
+  id              BigInt           @id @default(autoincrement())
+  facilityId      BigInt
+  createdByUserId BigInt
   type            ReminderType
   title           String
   message         String
