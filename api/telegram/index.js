@@ -29,11 +29,11 @@ const { PrismaClient } = require('@prisma/client');
 
 // ===== استيراد الوحدات الجديدة (Modular Utilities) =====
 // هذه الوحدات تم تطويرها حديثاً لتحسين الأمان والأداء
-const SecurityManager = require('./utils/security');      // إدارة الأمان والتحقق
-const FlowManager = require('./utils/flowManager');       // إدارة الفلوهات التفاعلية
-const PlanManager = require('./utils/planManager');       // إدارة خطط الاشتراك
-const ErrorHandler = require('./utils/errorHandler');     // معالجة الأخطاء المركزية
-const WorkOrderController = require('./controllers/workOrderController');
+const SecurityManager = require('./utils/security.js');      // إدارة الأمان والتحقق
+const FlowManager = require('./utils/flowManager.js');       // إدارة الفلوهات التفاعلية
+const PlanManager = require('./utils/planManager.js');       // إدارة خطط الاشتراك
+const ErrorHandler = require('./utils/errorHandler.js');     // معالجة الأخطاء المركزية
+const WorkOrderController = require('./controllers/workOrderController.js');
 
 // Load environment variables from .env if present
 if (process.env.NODE_ENV !== 'production') {
@@ -2583,7 +2583,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // === Enhanced Work Order Flow Handlers ===
-const EnhancedWorkOrderController = require('./controllers/enhancedWorkOrderController');
+const EnhancedWorkOrderController = require('./controllers/enhancedWorkOrderController.js');
 
 // بدء إنشاء طلب صيانة محسن
 bot.action('wo_enhanced_start', async (ctx) => {
@@ -2640,7 +2640,7 @@ bot.on('text', async (ctx, next) => {
     const text = ctx.message.text;
     
     // التحقق من التدفق المحسن
-    const flow = await require('./utils/smartFlowManager').getFlow(user.tgId.toString());
+    const flow = await require('./utils/smartFlowManager.js').getFlow(user.tgId.toString());
     if (flow && flow.flow === 'wo_enhanced') {
       
       // معالجة إدخال الموقع (الخطوة 4)
