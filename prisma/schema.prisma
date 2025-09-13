@@ -169,11 +169,19 @@ model Reminder {
 }
 
 model FlowState {
-  id        String   @id @unique // Will be the user's tgId
-  flow      String
-  step      Int
-  data      Json
-  updatedAt DateTime @updatedAt
+  id          String    @id @unique // Will be the user's tgId
+  flow        String
+  step        Int
+  totalSteps  Int       @default(1)
+  data        Json
+  config      Json?
+  history     Json?
+  status      String    @default("active") // active, completed, cancelled
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+  cancelledAt DateTime?
+  cancelReason String?
 }
 
 enum Role {

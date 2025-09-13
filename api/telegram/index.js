@@ -153,6 +153,7 @@ async function showMainMenu(ctx) {
       
       // Row 1: New Work Order (always visible for active users)
       buttons.push([Markup.button.callback('➕ New Work Order', 'wo_new')]);
+      buttons.push([Markup.button.callback('✨ Enhanced Work Order', 'wo_enhanced_start')]);
 
       // Row 2: View Work Orders (different views by role)
       if (['supervisor', 'master', 'admin'].includes(facilityUser.role)) {
@@ -2580,6 +2581,111 @@ if (process.env.NODE_ENV !== 'production') {
   // في الإنتاج، البوت يعمل عبر webhook
   console.log('🌐 Bot configured for webhook mode');
 }
+
+// === Enhanced Work Order Flow Handlers ===
+const EnhancedWorkOrderController = require('./controllers/enhancedWorkOrderController');
+
+// بدء إنشاء طلب صيانة محسن
+bot.action('wo_enhanced_start', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.startEnhancedWorkOrderCreation(ctx);
+});
+
+// معالجة اختيار نوع العمل المحسن
+bot.action(/wo_enhanced_type\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.handleWorkTypeSelection(ctx, ctx.match[1]);
+});
+
+// معالجة اختيار نوع الخدمة المحسن
+bot.action(/wo_enhanced_service\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.handleServiceTypeSelection(ctx, ctx.match[1]);
+});
+
+// معالجة اختيار الأولوية المحسن
+bot.action(/wo_enhanced_priority\|(.+)/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.handlePrioritySelection(ctx, ctx.match[1]);
+});
+
+// تأكيد إنشاء طلب الصيانة المحسن
+bot.action('wo_enhanced_confirm', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.confirmWorkOrderCreation(ctx);
+});
+
+// العودة للخطوة السابقة
+bot.action('wo_enhanced_back', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.goBack(ctx);
+});
+
+// إلغاء إنشاء طلب الصيانة
+bot.action('wo_enhanced_cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.cancelWorkOrderCreation(ctx);
+});
+
+// تخطي إدخال المعدات
+bot.action('wo_enhanced_skip', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await EnhancedWorkOrderController.handleEquipmentInput(ctx, '');
+});
+
+// معالجة النصوص للتدفق المحسن
+bot.on('text', async (ctx, next) => {
+  try {
+    const { user } = await SecurityManager.authenticateUser(ctx);
+    const text = ctx.message.text;
+    
+    // التحقق من التدفق المحسن
+    const flow = await require('./utils/smartFlowManager').getFlow(user.tgId.toString());
+    if (flow && flow.flow === 'wo_enhanced') {
+      
+      // معالجة إدخال الموقع (الخطوة 4)
+      if (flow.step === 4) {
+        if (text.toLowerCase() === '/cancel') {
+          await EnhancedWorkOrderController.cancelWorkOrderCreation(ctx);
+          return;
+        }
+        await EnhancedWorkOrderController.handleLocationInput(ctx, text);
+        return;
+      }
+      
+      // معالجة إدخال المعدات (الخطوة 5)
+      if (flow.step === 5) {
+        if (text.toLowerCase() === '/cancel') {
+          await EnhancedWorkOrderController.cancelWorkOrderCreation(ctx);
+          return;
+        }
+        if (text.toLowerCase() === '/skip') {
+          await EnhancedWorkOrderController.handleEquipmentInput(ctx, '');
+          return;
+        }
+        await EnhancedWorkOrderController.handleEquipmentInput(ctx, text);
+        return;
+      }
+      
+      // معالجة إدخال الوصف (الخطوة 6)
+      if (flow.step === 6) {
+        if (text.toLowerCase() === '/cancel') {
+          await EnhancedWorkOrderController.cancelWorkOrderCreation(ctx);
+          return;
+        }
+        await EnhancedWorkOrderController.handleDescriptionInput(ctx, text);
+        return;
+      }
+    }
+    
+    // إذا لم يكن هناك تدفق محسن، انتقل للمعالج التالي
+    await next();
+    
+  } catch (error) {
+    console.error('Error in enhanced text handler:', error);
+    await next();
+  }
+});
 
 // Export the bot for Vercel
 module.exports = async (req, res) => {
